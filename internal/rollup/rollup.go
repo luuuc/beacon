@@ -1,0 +1,276 @@
+// Package rollup is Beacon's background aggregation worker.
+//
+// Design choices (see doc/definition/02-architecture.md and 03-data-model.md):
+//
+//   - No cursor table. Every tick re-derives rollups from raw events over a
+//     bounded window. Missing a tick is harmless: the next one catches up.
+//     This is the "crash-safe" property — a half-finished tick leaves state
+//     consistent because the work is idempotent.
+//   - Each tick re-aggregates the current hour and the previous hour.
+//     Previous-hour coverage catches late-arriving events that cross the
+//     boundary and eliminates the need for explicit "finalize the hour" state.
+//   - Percentiles are computed in Go, not in SQL. PostgreSQL has
+//     percentile_cont but SQLite doesn't; doing it in Go keeps the adapter
+//     interface narrow.
+//   - LastTick is a monotonic stamp readable from the /readyz check. If
+//     aggregation fails, LastTick doesn't advance, and readyz turns 503.
+package rollup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math"
+	"sort"
+	"sync/atomic"
+	"time"
+
+	"github.com/luuuc/beacon/internal/beacondb"
+)
+
+type Config struct {
+	TickInterval time.Duration  // default 60s
+	RetentionRaw time.Duration  // default 14 days
+	PruneAt      string         // "HH:MM" in Timezone; default "03:00"
+	Timezone     *time.Location // default UTC
+}
+
+func (c Config) withDefaults() Config {
+	if c.TickInterval <= 0 {
+		c.TickInterval = time.Minute
+	}
+	if c.RetentionRaw <= 0 {
+		c.RetentionRaw = 14 * 24 * time.Hour
+	}
+	if c.PruneAt == "" {
+		c.PruneAt = "03:00"
+	}
+	if c.Timezone == nil {
+		c.Timezone = time.UTC
+	}
+	return c
+}
+
+type Worker struct {
+	cfg     Config
+	adapter beacondb.Adapter
+	log     *slog.Logger
+
+	// lastTick is the unix-nanosecond stamp of the most recent successful
+	// tick. Zero until the first tick completes. Readable from any goroutine.
+	lastTick atomic.Int64
+
+	// Clock and persistent prune state (guarded by the caller's single-
+	// goroutine Run loop; no extra locking needed).
+	now           func() time.Time
+	lastPruneDate string
+}
+
+func NewWorker(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Worker {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Worker{
+		cfg:     cfg.withDefaults(),
+		adapter: adapter,
+		log:     log,
+		now:     time.Now,
+	}
+}
+
+// SetNow overrides the worker's clock. Test-only.
+func (w *Worker) SetNow(now func() time.Time) { w.now = now }
+
+// LastTick returns the timestamp of the most recent successful aggregation,
+// or the zero time if no tick has completed yet. Exposed for readyz.
+func (w *Worker) LastTick() time.Time {
+	ns := w.lastTick.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns).UTC()
+}
+
+// Run starts the worker loop. It performs an initial tick before entering
+// the ticker (the "recompute current hour on boot" crash-safety step) and
+// blocks until ctx is cancelled. Errors on individual ticks are logged;
+// only a context cancel ends the loop.
+func (w *Worker) Run(ctx context.Context) error {
+	if err := w.RunOnce(ctx); err != nil {
+		w.log.Error("initial rollup tick", "err", err)
+	}
+
+	t := time.NewTicker(w.cfg.TickInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+			if err := w.RunOnce(ctx); err != nil {
+				w.log.Error("rollup tick", "err", err)
+			}
+		}
+	}
+}
+
+// RunOnce performs one aggregation pass over the current and previous hour
+// and runs the daily prune if the configured time has passed. Exposed for
+// tests and for the initial boot-time recompute.
+func (w *Worker) RunOnce(ctx context.Context) error {
+	now := w.now().UTC()
+	currentHour := now.Truncate(time.Hour)
+	previousHour := currentHour.Add(-time.Hour)
+
+	if err := w.aggregateHour(ctx, previousHour); err != nil {
+		return fmt.Errorf("aggregate previous hour %s: %w", previousHour.Format(time.RFC3339), err)
+	}
+	if err := w.aggregateHour(ctx, currentHour); err != nil {
+		return fmt.Errorf("aggregate current hour %s: %w", currentHour.Format(time.RFC3339), err)
+	}
+	if err := w.aggregateTrailingBaselines(ctx); err != nil {
+		return fmt.Errorf("aggregate trailing baselines: %w", err)
+	}
+	if err := w.captureDeploymentBaselines(ctx); err != nil {
+		return fmt.Errorf("capture deployment baselines: %w", err)
+	}
+
+	// Daily prune runs at most once per calendar day in the configured TZ.
+	if w.shouldPrune(now) {
+		cutoff := now.Add(-w.cfg.RetentionRaw)
+		n, err := w.adapter.DeleteEventsOlderThan(ctx, cutoff)
+		if err != nil {
+			// Prune failure is non-fatal — log it and keep the tick marked
+			// successful so readyz stays green.
+			w.log.Error("prune raw events", "err", err)
+		} else if n > 0 {
+			w.log.Info("pruned raw events", "deleted", n, "cutoff_utc", cutoff.Format(time.RFC3339))
+		}
+	}
+
+	w.lastTick.Store(now.UnixNano())
+	return nil
+}
+
+// aggregateHour re-derives every (kind, name[, fingerprint]) rollup for the
+// hour bucket [hour, hour+1) from raw events. It is safe to call repeatedly.
+func (w *Worker) aggregateHour(ctx context.Context, hour time.Time) error {
+	nextHour := hour.Add(time.Hour)
+	events, err := w.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Since: hour,
+		Until: nextHour,
+	})
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+
+	type bucketKey struct {
+		kind        beacondb.Kind
+		name        string
+		fingerprint string
+	}
+	buckets := map[bucketKey][]beacondb.Event{}
+	for _, e := range events {
+		bk := bucketKey{kind: e.Kind, name: e.Name}
+		if e.Kind == beacondb.KindError {
+			bk.fingerprint = e.Fingerprint
+		}
+		buckets[bk] = append(buckets[bk], e)
+	}
+
+	metrics := make([]beacondb.Metric, 0, len(buckets))
+	for bk, evs := range buckets {
+		m := beacondb.Metric{
+			Kind:          bk.kind,
+			Name:          bk.name,
+			PeriodKind:    beacondb.PeriodHour,
+			PeriodWindow:  "hour",
+			PeriodStart:   hour,
+			Count:         int64(len(evs)),
+			Fingerprint:   bk.fingerprint,
+			DimensionHash: "", // v1 has no dimension rollups; card for that is separate.
+		}
+
+		durations := make([]float64, 0, len(evs))
+		var sum float64
+		for _, e := range evs {
+			if e.DurationMs != nil {
+				d := float64(*e.DurationMs)
+				durations = append(durations, d)
+				sum += d
+			}
+		}
+		if len(durations) > 0 {
+			sort.Float64s(durations)
+			sumVal := sum
+			m.Sum = &sumVal
+			p50 := percentile(durations, 0.50)
+			p95 := percentile(durations, 0.95)
+			p99 := percentile(durations, 0.99)
+			m.P50 = &p50
+			m.P95 = &p95
+			m.P99 = &p99
+		}
+		metrics = append(metrics, m)
+	}
+
+	return w.adapter.UpsertMetrics(ctx, metrics)
+}
+
+// shouldPrune returns true at most once per calendar day (in the configured
+// timezone) once the wall clock is past PruneAt.
+func (w *Worker) shouldPrune(nowUTC time.Time) bool {
+	local := nowUTC.In(w.cfg.Timezone)
+	today := local.Format("2006-01-02")
+	if today == w.lastPruneDate {
+		return false
+	}
+	hh, mm, err := parseHHMM(w.cfg.PruneAt)
+	if err != nil {
+		// Malformed prune_at at boot time would be a config bug. Log once
+		// per tick at warn level and skip pruning.
+		w.log.Warn("malformed rollup.prune_at; skipping prune", "value", w.cfg.PruneAt, "err", err)
+		return false
+	}
+	pruneAt := time.Date(local.Year(), local.Month(), local.Day(), hh, mm, 0, 0, w.cfg.Timezone)
+	if local.Before(pruneAt) {
+		return false
+	}
+	w.lastPruneDate = today
+	return true
+}
+
+func parseHHMM(s string) (int, int, error) {
+	if len(s) < 4 || len(s) > 5 {
+		return 0, 0, errors.New("expected HH:MM")
+	}
+	var hh, mm int
+	n, err := fmt.Sscanf(s, "%d:%d", &hh, &mm)
+	if err != nil || n != 2 {
+		return 0, 0, errors.New("expected HH:MM")
+	}
+	if hh < 0 || hh > 23 || mm < 0 || mm > 59 {
+		return 0, 0, errors.New("HH or MM out of range")
+	}
+	return hh, mm, nil
+}
+
+// percentile uses the nearest-rank method: the sample at position
+// ceil(p * n). sorted must already be sorted ascending.
+func percentile(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(math.Ceil(p*float64(len(sorted)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
