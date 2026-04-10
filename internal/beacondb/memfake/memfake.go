@@ -1,6 +1,14 @@
 // Package memfake is an in-memory Adapter implementation used by the
 // conformance suite and by tests elsewhere in the binary that need an
 // adapter without a real database. It is not a production adapter.
+//
+// Coverage note: memfake has no direct unit tests of its own. Instead,
+// memfake_test.go runs the shared beacondb.RunConformance suite against
+// a fresh Fake, exercising every public method of the interface. Any
+// behavior the rest of the code relies on is covered there; callers that
+// need adapter-specific edge cases should add them to the conformance
+// suite rather than here, so every adapter (PG, MySQL, SQLite) inherits
+// the check.
 package memfake
 
 import (
