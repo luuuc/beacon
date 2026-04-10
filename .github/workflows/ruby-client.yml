@@ -1,0 +1,40 @@
+name: ruby-client
+
+on:
+  push:
+    branches: [main, feat/bootstrap]
+    paths:
+      - "clients/ruby/beacon-client/**"
+      - "spec/fixtures.json"
+      - ".github/workflows/ruby-client.yml"
+  pull_request:
+    paths:
+      - "clients/ruby/beacon-client/**"
+      - "spec/fixtures.json"
+      - ".github/workflows/ruby-client.yml"
+
+jobs:
+  test-and-bench:
+    name: minitest + Rack overhead bench
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: clients/ruby/beacon-client
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: false
+
+      - name: Install minimal deps
+        run: gem install minitest -v "~> 5.20" rack --no-document
+
+      - name: Run unit tests
+        run: rake test
+
+      - name: Run Rack overhead bench (fails if added P95 > 50µs)
+        run: rake bench
