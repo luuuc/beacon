@@ -1,4 +1,5 @@
 require "test_helper"
+require "stringio"
 
 # We don't boot Rails for this test. We stub just enough of Rails::Railtie's
 # surface that beacon/rails can be required and its initializer blocks can be
@@ -160,6 +161,83 @@ class RailsRailtieTest < Minitest::Test
     end
   end
 
+  def test_route_template_for_reads_request_route_uri_pattern
+    env = { "REQUEST_METHOD" => "GET" }
+    request = fake_request(env, route_uri_pattern: "/users/:id(.:format)")
+    assert_equal "GET /users/:id",
+      Beacon::Railtie.route_template_for(env, { request: request })
+  end
+
+  def test_route_template_for_passes_through_when_no_format_suffix
+    env = { "REQUEST_METHOD" => "GET" }
+    request = fake_request(env, route_uri_pattern: "/health")
+    assert_equal "GET /health",
+      Beacon::Railtie.route_template_for(env, { request: request })
+  end
+
+  def test_route_template_for_only_strips_trailing_format_suffix
+    env = { "REQUEST_METHOD" => "GET" }
+    request = fake_request(env, route_uri_pattern: "/api(/:version)/users/:id(.:format)")
+    assert_equal "GET /api(/:version)/users/:id",
+      Beacon::Railtie.route_template_for(env, { request: request })
+  end
+
+  def test_route_template_for_returns_nil_when_request_missing
+    assert_nil Beacon::Railtie.route_template_for({ "REQUEST_METHOD" => "GET" }, {})
+  end
+
+  def test_route_template_for_returns_nil_when_pattern_nil
+    env = { "REQUEST_METHOD" => "GET" }
+    request = fake_request(env, route_uri_pattern: nil)
+    assert_nil Beacon::Railtie.route_template_for(env, { request: request })
+  end
+
+  def test_route_template_for_returns_nil_when_request_does_not_respond_to_accessor
+    # Pre-7.1 Rails: request does not respond to route_uri_pattern at all.
+    env = { "REQUEST_METHOD" => "GET" }
+    bare_request = Object.new
+    bare_request.define_singleton_method(:env) { env }
+    assert_nil Beacon::Railtie.route_template_for(env, { request: bare_request })
+  end
+
+  def test_subscribe_action_controller_writes_route_template_into_env
+    with_stubbed_notifications do |captured_ref|
+      initializer_block("beacon.subscribe_action_controller").call(FakeRails::FakeApp.new)
+      captured = captured_ref.call
+      refute_nil captured, "initializer should have subscribed"
+
+      env = { "REQUEST_METHOD" => "GET" }
+      request = fake_request(env, route_uri_pattern: "/orders/:id(.:format)")
+      captured.call("start_processing.action_controller", nil, nil, nil,
+        { request: request, controller: "OrdersController", action: "show" })
+
+      assert_equal "GET /orders/:id", env["beacon.route_template"]
+    end
+  end
+
+  def test_subscribe_action_controller_swallows_exceptions_from_bad_payload
+    with_stubbed_notifications do |captured_ref|
+      initializer_block("beacon.subscribe_action_controller").call(FakeRails::FakeApp.new)
+      captured = captured_ref.call
+
+      # Request whose #env raises — simulates a torn-down request or a
+      # weird host injecting a broken payload.
+      exploding = Object.new
+      exploding.define_singleton_method(:env) { raise "kaboom" }
+
+      orig_stderr = $stderr
+      $stderr = StringIO.new
+      begin
+        # Must not raise into the notifier loop.
+        captured.call("start_processing.action_controller", nil, nil, nil,
+          { request: exploding })
+        assert_match(/\[beacon\] action_controller subscriber rescued/, $stderr.string)
+      ensure
+        $stderr = orig_stderr
+      end
+    end
+  end
+
   def test_middleware_defaults_sink_to_beacon_client
     require "rack/mock"
     Beacon.config.async = false  # no flusher thread for this test
@@ -176,6 +254,40 @@ class RailsRailtieTest < Minitest::Test
 
   def initializer_block(name)
     Beacon::Railtie.initializers.find { |n, _, _| n == name }.last
+  end
+
+  # Build a fake ActionDispatch::Request-shaped object. Exposes #env and
+  # #route_uri_pattern (the Rails 7.1+ accessor Beacon reads).
+  def fake_request(env, route_uri_pattern:)
+    request = Object.new
+    request.define_singleton_method(:env) { env }
+    request.define_singleton_method(:route_uri_pattern) { route_uri_pattern }
+    request
+  end
+
+  # Temporarily replace ::ActiveSupport::Notifications with a stub that
+  # captures the block passed to .subscribe. The test body can invoke the
+  # captured block to simulate a notification firing, without pulling the
+  # full activesupport gem into the test environment.
+  def with_stubbed_notifications
+    captured = nil
+    had_active_support  = defined?(::ActiveSupport)
+    had_notifications   = had_active_support && ::ActiveSupport.const_defined?(:Notifications, false)
+    orig_notifications  = had_notifications ? ::ActiveSupport::Notifications : nil
+
+    Object.const_set(:ActiveSupport, Module.new) unless had_active_support
+    ::ActiveSupport.send(:remove_const, :Notifications) if had_notifications
+    stub = Module.new
+    stub.define_singleton_method(:subscribe) { |_name, &block| captured = block }
+    ::ActiveSupport.const_set(:Notifications, stub)
+
+    yield(-> { captured })
+  ensure
+    if ::ActiveSupport.const_defined?(:Notifications, false)
+      ::ActiveSupport.send(:remove_const, :Notifications)
+    end
+    ::ActiveSupport.const_set(:Notifications, orig_notifications) if had_notifications
+    Object.send(:remove_const, :ActiveSupport) if !had_active_support && defined?(::ActiveSupport)
   end
 
   # Temporarily replace Beacon.client with a stub that records after_fork

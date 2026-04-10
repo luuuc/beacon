@@ -15,8 +15,11 @@ require "beacon/middleware"
 #     the child, covering clustered Puma, Unicorn, and Passenger without
 #     touching their internals.
 #
-# Route-template integration (writing env["beacon.route_template"] from
-# AS::Notifications) lives separately and is installed by Card 2.
+# Route templates are written into env["beacon.route_template"] from a
+# start_processing.action_controller subscriber so the middleware's name
+# lookup short-circuits the regex path normalizer for Rails requests.
+# The non-Rails regex fallback (PathNormalizer) stays in place as the
+# documented fallback for plain Rack apps.
 module Beacon
   class Railtie < ::Rails::Railtie
     config.before_configuration do
@@ -48,6 +51,34 @@ module Beacon
       end
     end
 
+    # Route template subscriber. Fires at the start of every controller
+    # action (after routing, before the action runs) and writes the matched
+    # route template into the request env so Beacon::Middleware — which
+    # sits outside the router — can read it when the action returns.
+    #
+    # Shape: "<METHOD> <path-template>", e.g. "GET /users/:id" — same
+    # format as the regex fallback in PathNormalizer, so the dashboard
+    # groups Rails and non-Rails clients the same way.
+    #
+    # Source of truth: Rails 7.1+ stashes the matched route's URI pattern
+    # on env["action_dispatch.route_uri_pattern"]. For older Rails we fall
+    # back to controller#action, which is still useful even if it's not
+    # the exact template.
+    initializer "beacon.subscribe_action_controller", after: :load_config_initializers do |_app|
+      next unless defined?(::ActiveSupport::Notifications)
+      ::ActiveSupport::Notifications.subscribe("start_processing.action_controller") do |_name, _start, _finish, _id, payload|
+        begin
+          request = payload[:request]
+          env     = request&.env || payload[:headers]&.env
+          next unless env
+          template = Beacon::Railtie.route_template_for(env, payload)
+          env["beacon.route_template"] = template if template
+        rescue => e
+          warn "[beacon] action_controller subscriber rescued #{e.class}: #{e.message}"
+        end
+      end
+    end
+
     initializer "beacon.install_integrations", after: :load_config_initializers do |_app|
       if defined?(::ActiveJob)
         require "beacon/integrations/active_job"
@@ -64,6 +95,33 @@ module Beacon
       next if Beacon::Railtie.instance_variable_get(:@fork_hook_installed)
       Beacon::Railtie.instance_variable_set(:@fork_hook_installed, true)
       Process.singleton_class.prepend(ForkHook)
+    end
+
+    ROUTE_FORMAT_SUFFIX = "(.:format)".freeze
+
+    # Extract "<METHOD> <path-template>" from a start_processing payload.
+    # Returns nil when no template is available — the middleware then falls
+    # through to Beacon::PathNormalizer, which is the documented fallback.
+    # We deliberately do not emit a controller#action string here: mixing
+    # two label shapes on one dashboard produces confusing groupings.
+    #
+    # Source of truth: ActionDispatch::Request#route_uri_pattern (Rails 7.1+).
+    # This is a *method* on the request object, not an env key — the matched
+    # pattern is stored on the request instance by the router and read via
+    # the public accessor.
+    def self.route_template_for(env, payload)
+      method  = env["REQUEST_METHOD"]
+      request = payload[:request]
+      return nil unless method && request && request.respond_to?(:route_uri_pattern)
+
+      pattern = request.route_uri_pattern
+      return nil unless pattern && !pattern.empty?
+
+      # Strip the "(.:format)" tail without allocating on the common path.
+      if pattern.end_with?(ROUTE_FORMAT_SUFFIX)
+        pattern = pattern[0, pattern.length - ROUTE_FORMAT_SUFFIX.length]
+      end
+      "#{method} #{pattern}"
     end
 
     # Ruby 3.1+ Process._fork hook. Runs in every fork child, which is
