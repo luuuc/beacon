@@ -27,11 +27,9 @@ func newTestStack(t *testing.T) (*Server, *memfake.Fake) {
 	if err := fake.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	readsH := reads.NewHandler(reads.Config{}, fake, nil)
-	readsH.SetNow(func() time.Time { return fixedNow })
-
-	worker := rollup.NewWorker(rollup.Config{}, fake, nil)
-	worker.SetNow(func() time.Time { return fixedNow })
+	clock := func() time.Time { return fixedNow }
+	readsH := reads.NewHandler(reads.Config{Now: clock}, fake, nil)
+	worker := rollup.NewWorker(rollup.Config{Now: clock}, fake, nil)
 
 	srv := New(Config{Bind: "127.0.0.1", Port: 0}, readsH, worker, nil)
 	return srv, fake

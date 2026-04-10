@@ -191,11 +191,11 @@ func TestMetric_baselineSummary(t *testing.T) {
 		t.Errorf("window = %q", resp.Baseline.Window)
 	}
 	// Mean of [100,110,90,120,80] = 100. Stddev = sqrt(1000/4) = 15.81...
-	if resp.Baseline.Mean != 100.0 {
-		t.Errorf("mean = %v, want 100", resp.Baseline.Mean)
+	if resp.Baseline.HourlyCountMean != 100.0 {
+		t.Errorf("hourly_count_mean = %v, want 100", resp.Baseline.HourlyCountMean)
 	}
-	if resp.Baseline.Stddev < 15.8 || resp.Baseline.Stddev > 15.9 {
-		t.Errorf("stddev = %v, want ~15.81", resp.Baseline.Stddev)
+	if resp.Baseline.HourlyCountStd < 15.8 || resp.Baseline.HourlyCountStd > 15.9 {
+		t.Errorf("hourly_count_stddev = %v, want ~15.81", resp.Baseline.HourlyCountStd)
 	}
 	if resp.Baseline.CapturedAt != capturedAt.Format(time.RFC3339) {
 		t.Errorf("captured_at = %q, want %q", resp.Baseline.CapturedAt, capturedAt.Format(time.RFC3339))

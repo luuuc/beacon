@@ -41,6 +41,18 @@ import (
 
 type Config struct {
 	AuthToken string
+	// Now overrides the handler's clock. Leave nil in production; tests
+	// inject a fixed function so baseline/window math is deterministic.
+	Now func() time.Time
+}
+
+// ErrInvalidQuery wraps every validation failure returned by the Get*
+// methods. Callers at the HTTP layer use errors.Is to map it to 400.
+// Anything not matching is a storage failure and maps to 503.
+var ErrInvalidQuery = errors.New("invalid query")
+
+func invalidQueryf(format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrInvalidQuery}, args...)...)
 }
 
 type Handler struct {
@@ -54,11 +66,12 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{cfg: cfg, adapter: adapter, log: log, now: time.Now}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Handler{cfg: cfg, adapter: adapter, log: log, now: now}
 }
-
-// SetNow overrides the handler's clock. Test-only.
-func (h *Handler) SetNow(now func() time.Time) { h.now = now }
 
 // Mount registers the three HTTP read routes. The MCP server registers its
 // own transport separately and calls the Get* methods below directly.
@@ -90,11 +103,18 @@ type MetricPoint struct {
 	P99         *float64 `json:"p99,omitempty"`
 }
 
+// BaselineSummary describes the trailing window attached to a metric
+// response. Mean/stddev are computed from the metric's *hourly count*
+// series inside the window — they answer "how much traffic does this
+// metric usually see per hour" and are kind-agnostic (outcome counts,
+// perf request counts, error occurrences). They are deliberately not
+// percentile statistics: an honest baseline p95 would need raw durations
+// that have already been pruned by the time the baseline is queried.
 type BaselineSummary struct {
-	Window     string  `json:"window"`
-	Mean       float64 `json:"mean"`
-	Stddev     float64 `json:"stddev"`
-	CapturedAt string  `json:"captured_at"`
+	Window          string  `json:"window"`
+	HourlyCountMean float64 `json:"hourly_count_mean"`
+	HourlyCountStd  float64 `json:"hourly_count_stddev"`
+	CapturedAt      string  `json:"captured_at"`
 }
 
 type ErrorsResponse struct {
@@ -161,10 +181,10 @@ type GetPerfRequest struct {
 // beacon.metric tool.
 func (h *Handler) GetMetric(ctx context.Context, req GetMetricRequest) (*MetricResponse, error) {
 	if !req.Kind.Valid() {
-		return nil, errors.New("kind must be outcome, perf, or error")
+		return nil, invalidQueryf("kind must be outcome, perf, or error")
 	}
 	if req.Name == "" {
-		return nil, errors.New("name is required")
+		return nil, invalidQueryf("name is required")
 	}
 	if req.Window == 0 {
 		req.Window = 7 * 24 * time.Hour
@@ -173,7 +193,7 @@ func (h *Handler) GetMetric(ctx context.Context, req GetMetricRequest) (*MetricR
 		req.PeriodKind = "day"
 	}
 	if req.PeriodKind != "hour" && req.PeriodKind != "day" {
-		return nil, errors.New("period_kind must be hour or day")
+		return nil, invalidQueryf("period_kind must be hour or day")
 	}
 
 	now := h.now().UTC()
@@ -343,10 +363,10 @@ func (h *Handler) buildBaselineSummary(ctx context.Context, kind beacondb.Kind, 
 	}
 
 	return &BaselineSummary{
-		Window:     baselineLabel,
-		Mean:       roundTo(mean, 2),
-		Stddev:     roundTo(stddev, 2),
-		CapturedAt: capturedAt,
+		Window:          baselineLabel,
+		HourlyCountMean: roundTo(mean, 2),
+		HourlyCountStd:  roundTo(stddev, 2),
+		CapturedAt:      capturedAt,
 	}, nil
 }
 
@@ -552,10 +572,10 @@ func (h *Handler) handlePerfEndpoints(w http.ResponseWriter, r *http.Request) {
 // deploy.shipped outcome event is ingested.
 func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, name string) (*DeployBaselineResponse, error) {
 	if !kind.Valid() {
-		return nil, errors.New("kind must be outcome, perf, or error")
+		return nil, invalidQueryf("kind must be outcome, perf, or error")
 	}
 	if name == "" {
-		return nil, errors.New("name is required")
+		return nil, invalidQueryf("name is required")
 	}
 	rows, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
 		Kind:         kind,
@@ -592,18 +612,14 @@ func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, nam
 // ---------------------------------------------------------------------------
 
 func (h *Handler) writeQueryError(w http.ResponseWriter, err error) {
-	// Validation errors from the Get* methods bubble up as plain errors.
-	// Map them to 400; anything else is a storage failure → 503.
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "kind must be"),
-		strings.Contains(msg, "name is required"),
-		strings.Contains(msg, "period_kind must be"):
-		httputil.WriteJSONError(w, http.StatusBadRequest, msg)
-	default:
-		h.log.Error("reads: query error", "err", err)
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "storage error")
+	// Validation failures from the Get* methods wrap ErrInvalidQuery.
+	// Anything else is a storage failure → 503.
+	if errors.Is(err, ErrInvalidQuery) {
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
+	h.log.Error("reads: query error", "err", err)
+	httputil.WriteJSONError(w, http.StatusServiceUnavailable, "storage error")
 }
 
 func parseWindow(s string) (time.Duration, error) {
