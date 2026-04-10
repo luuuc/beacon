@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luuuc/beacon/internal/beacondb/memfake"
 	"github.com/luuuc/beacon/internal/config"
+	"github.com/luuuc/beacon/internal/rollup"
 )
 
 func newTestServer(t *testing.T, checks ReadyChecks, pprofOn bool) *Server {
@@ -98,6 +100,40 @@ func TestPprofEnabled(t *testing.T) {
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("pprof unreachable when enabled: %d", rec.Code)
+	}
+}
+
+// End-to-end: a rollup tick that errors must leave LastTick pinned so a
+// subsequent /readyz probe returns 503. This wires real rollup.Worker and
+// server.RollupTickCheck together; the unit-level pieces live in rollup
+// and the TickCheck test below.
+func TestReadyzFlipsWhenRollupTickFails(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	worker := rollup.NewWorker(rollup.Config{
+		TickInterval: time.Minute,
+		RetentionRaw: 14 * 24 * time.Hour,
+	}, fake, nil)
+
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	// Close the adapter → subsequent ticks fail → LastTick stays pinned.
+	_ = fake.Close()
+	_ = worker.RunOnce(context.Background()) // expected to error
+	pinned := worker.LastTick()
+
+	// Tight 1ns bound: the pinned tick is already "stale" relative to the
+	// probe, so the check flips to fail even though the worker itself hasn't
+	// advanced its wall clock.
+	check := RollupTickCheck(worker.LastTick, time.Nanosecond)
+	// Small spin to guarantee time.Since(pinned) > 1ns.
+	for time.Since(pinned) < 2*time.Nanosecond {
+	}
+	if err := check(context.Background()); err == nil {
+		t.Error("readyz check should fail when rollup tick is stale after a failure")
 	}
 }
 
