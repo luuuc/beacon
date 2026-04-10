@@ -34,6 +34,9 @@ type Config struct {
 	RetentionRaw time.Duration  // default 14 days
 	PruneAt      string         // "HH:MM" in Timezone; default "03:00"
 	Timezone     *time.Location // default UTC
+	// Now overrides the worker's clock. Leave nil in production; tests
+	// inject a fixed function to exercise boundary logic deterministically.
+	Now func() time.Time
 }
 
 func (c Config) withDefaults() Config {
@@ -61,26 +64,31 @@ type Worker struct {
 	// tick. Zero until the first tick completes. Readable from any goroutine.
 	lastTick atomic.Int64
 
-	// Clock and persistent prune state (guarded by the caller's single-
+	// Clock and persistent tick state (guarded by the caller's single-
 	// goroutine Run loop; no extra locking needed).
 	now           func() time.Time
 	lastPruneDate string
+	// hourlyDoneFor is the hour bucket for which hourly-boundary work
+	// (previous-hour aggregation + trailing baselines) has already run.
+	// Zero until the first tick, then advances once per wall-clock hour.
+	hourlyDoneFor time.Time
 }
 
 func NewWorker(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Worker {
 	if log == nil {
 		log = slog.Default()
 	}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Worker{
 		cfg:     cfg.withDefaults(),
 		adapter: adapter,
 		log:     log,
-		now:     time.Now,
+		now:     now,
 	}
 }
-
-// SetNow overrides the worker's clock. Test-only.
-func (w *Worker) SetNow(now func() time.Time) { w.now = now }
 
 // LastTick returns the timestamp of the most recent successful aggregation,
 // or the zero time if no tick has completed yet. Exposed for readyz.
@@ -115,23 +123,41 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce performs one aggregation pass over the current and previous hour
-// and runs the daily prune if the configured time has passed. Exposed for
-// tests and for the initial boot-time recompute.
+// RunOnce performs one aggregation pass and runs the daily prune if the
+// configured time has passed. The current hour is re-aggregated every tick;
+// the previous hour and the trailing baselines are only recomputed once per
+// wall-clock hour (on the first tick after the boundary crosses, and on the
+// very first tick after boot for crash-safety). Exposed for tests and for
+// the initial boot-time recompute.
 func (w *Worker) RunOnce(ctx context.Context) error {
 	now := w.now().UTC()
 	currentHour := now.Truncate(time.Hour)
-	previousHour := currentHour.Add(-time.Hour)
+	hourlyBoundary := !w.hourlyDoneFor.Equal(currentHour)
 
-	if err := w.aggregateHour(ctx, previousHour); err != nil {
-		return fmt.Errorf("aggregate previous hour %s: %w", previousHour.Format(time.RFC3339), err)
+	// Previous-hour sweep catches late-arriving events that crossed the
+	// boundary. Only needed once per hour transition (and once on boot).
+	if hourlyBoundary {
+		previousHour := currentHour.Add(-time.Hour)
+		if err := w.aggregateHour(ctx, previousHour); err != nil {
+			return fmt.Errorf("aggregate previous hour %s: %w", previousHour.Format(time.RFC3339), err)
+		}
 	}
+
 	if err := w.aggregateHour(ctx, currentHour); err != nil {
 		return fmt.Errorf("aggregate current hour %s: %w", currentHour.Format(time.RFC3339), err)
 	}
-	if err := w.aggregateTrailingBaselines(ctx); err != nil {
-		return fmt.Errorf("aggregate trailing baselines: %w", err)
+
+	// Trailing baselines fold every hourly row in the 30d window; run them
+	// after the current-hour metrics have been written so the most recent
+	// hour is included. Gated to the hourly boundary to avoid a 30-day
+	// re-scan every tick.
+	if hourlyBoundary {
+		if err := w.aggregateTrailingBaselines(ctx); err != nil {
+			return fmt.Errorf("aggregate trailing baselines: %w", err)
+		}
+		w.hourlyDoneFor = currentHour
 	}
+
 	if err := w.captureDeploymentBaselines(ctx); err != nil {
 		return fmt.Errorf("capture deployment baselines: %w", err)
 	}
@@ -142,10 +168,19 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		n, err := w.adapter.DeleteEventsOlderThan(ctx, cutoff)
 		if err != nil {
 			// Prune failure is non-fatal — log it and keep the tick marked
-			// successful so readyz stays green.
-			w.log.Error("prune raw events", "err", err)
-		} else if n > 0 {
-			w.log.Info("pruned raw events", "deleted", n, "cutoff_utc", cutoff.Format(time.RFC3339))
+			// successful so readyz stays green. The `event=prune_failure`
+			// field is the grep target documented in 09-runbook.md.
+			w.log.Error("prune raw events",
+				"event", "prune_failure",
+				"cutoff_utc", cutoff.Format(time.RFC3339),
+				"err", err,
+			)
+		} else {
+			w.log.Info("pruned raw events",
+				"event", "prune_completed",
+				"deleted", n,
+				"cutoff_utc", cutoff.Format(time.RFC3339),
+			)
 		}
 	}
 
