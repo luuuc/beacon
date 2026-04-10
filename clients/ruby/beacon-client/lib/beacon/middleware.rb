@@ -1,4 +1,5 @@
 require "beacon"
+require "beacon/lru"
 
 module Beacon
   # Rack middleware that captures perf and errors on the host's hot path.
@@ -39,14 +40,15 @@ module Beacon
         language:    LANGUAGE,
       }.compact.freeze
 
-      # Per-(method,path) name cache. Two-level so we don't allocate a
-      # composite key string per request.
-      @name_cache = {}
-      @name_cache_max = 1024
+      # Per-(method,path) name cache — bounded LRU. Replaces the old
+      # two-level Hash whose eviction check only counted top-level method
+      # keys and would have let a bot probing distinct URLs OOM the worker.
+      @name_cache = Beacon::LRU.new(max: config.cache_size)
 
       # Fingerprint -> last full-stack send time (monotonic seconds).
-      @stack_seen = {}
-      @stack_mutex = Mutex.new
+      # Bounded LRU so a misbehaving error class with high-cardinality
+      # fingerprints can't grow the throttle map without bound.
+      @stack_seen = Beacon::LRU.new(max: config.cache_size)
     end
 
     def call(env)
@@ -112,34 +114,34 @@ module Beacon
       nil
     end
 
+    # Hot path. Note: we allocate ONE composite String per request here
+    # (`"#{method} #{path}"`). The bench (spec/bench/rack_overhead_bench.rb)
+    # shows no measurable regression vs the old two-level Hash, but if
+    # Card 9's real-Queue bench ever surfaces one, the recoverable
+    # optimization is to nest per-method LRUs and look up via two Hash
+    # ops (no String allocation on hit).
     def cached_name(method, path)
-      by_method = @name_cache[method]
-      if by_method
-        cached = by_method[path]
-        return cached if cached
-      else
-        by_method = (@name_cache[method] = {})
+      key = "#{method} #{path}"
+      @name_cache.compute_if_absent(key) do
+        PathNormalizer.normalize(method, path).freeze
       end
-
-      computed = PathNormalizer.normalize(method, path).freeze
-      if @name_cache.size > @name_cache_max
-        @name_cache.clear
-        @name_cache[method] = (by_method = {})
-      end
-      by_method[path] = computed
-      computed
     end
 
+    # Check-then-set against the LRU is not atomic across two lock
+    # acquisitions, so under heavy contention two threads can both observe
+    # `last` as expired for the same fingerprint and both send a full
+    # stack. That's acceptable — the dashboard groups events by
+    # fingerprint on read, so the worst case is two near-duplicate
+    # entries overlaid in the UI. The card's invariant is boundedness,
+    # not exact-once throttling.
     def should_send_full_stack?(fingerprint)
-      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      @stack_mutex.synchronize do
-        last = @stack_seen[fingerprint]
-        if last.nil? || now - last > 3600
-          @stack_seen[fingerprint] = now
-          true
-        else
-          false
-        end
+      now  = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      last = @stack_seen[fingerprint]
+      if last.nil? || now - last > 3600
+        @stack_seen[fingerprint] = now
+        true
+      else
+        false
       end
     end
 

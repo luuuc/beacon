@@ -103,4 +103,51 @@ class MiddlewareTest < Minitest::Test
     mw.call(env)
     assert_equal 0, @sink.events.length
   end
+
+  def test_name_cache_stays_bounded_under_distinct_url_probing
+    # 10,000 distinct paths simulate a bot probing a Rails app. Before the
+    # LRU, this grew @name_cache unbounded (the old size check only counted
+    # top-level method keys). Now it must cap at cache_size.
+    Beacon.config.cache_size = 512
+    mw = Beacon::Middleware.new(OK_APP, sink: @sink)
+    10_000.times do |i|
+      mw.call(Rack::MockRequest.env_for("/probe/#{i}/leaf", method: "GET"))
+    end
+    cache = mw.instance_variable_get(:@name_cache)
+    assert_operator cache.size, :<=, 512
+  end
+
+  def test_stack_seen_stays_bounded_under_distinct_fingerprints
+    # Drive the throttle directly with 500 genuinely distinct fingerprints.
+    # The earlier version of this test used `Class.new(StandardError)` at
+    # raise time, but anonymous classes have `.name == nil`, which meant
+    # every iteration hit the same fingerprint — trivially green even
+    # without an LRU.
+    Beacon.config.cache_size = 256
+    mw = Beacon::Middleware.new(OK_APP, sink: @sink)
+    500.times do |i|
+      fingerprint = Beacon::Fingerprint.compute("SomeError#{i}", "app/controllers/x.rb")
+      mw.send(:should_send_full_stack?, fingerprint)
+    end
+    seen = mw.instance_variable_get(:@stack_seen)
+    assert_operator seen.size, :<=, 256
+    refute_equal 0, seen.size, "sanity check: fingerprints must actually land in the cache"
+  end
+
+  def test_middleware_caches_tolerate_concurrent_inserts
+    mw = Beacon::Middleware.new(OK_APP, sink: @sink)
+    threads = 16
+    per_thread = 500
+    ts = Array.new(threads) do |t|
+      Thread.new do
+        per_thread.times do |i|
+          env = Rack::MockRequest.env_for("/t#{t}/#{i}", method: "GET")
+          mw.call(env)
+        end
+      end
+    end
+    ts.each(&:join)
+    cache = mw.instance_variable_get(:@name_cache)
+    assert_operator cache.size, :<=, Beacon.config.cache_size
+  end
 end

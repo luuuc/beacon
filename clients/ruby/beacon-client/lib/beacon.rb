@@ -1,6 +1,7 @@
 require "beacon/version"
 require "beacon/configuration"
 require "beacon/fingerprint"
+require "beacon/lru"
 require "beacon/path_normalizer"
 require "beacon/queue"
 require "beacon/transport"
