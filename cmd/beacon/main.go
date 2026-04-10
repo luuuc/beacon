@@ -154,6 +154,7 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 
 	ingestH := ingest.NewHandler(ingest.Config{
 		AuthToken: cfg.Server.Auth.Token,
+		TrustXFF:  cfg.Ingest.TrustXFF,
 	}, adapter, log)
 	srv.Mount("POST /events", ingestH)
 

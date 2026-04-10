@@ -15,6 +15,16 @@ type Config struct {
 	Retention RetentionConfig `yaml:"retention"`
 	Rollup    RollupConfig    `yaml:"rollup"`
 	Baseline  BaselineConfig  `yaml:"baseline"`
+	Ingest    IngestConfig    `yaml:"ingest"`
+}
+
+type IngestConfig struct {
+	// TrustXFF controls whether X-Forwarded-For is honored for the per-IP
+	// rate limiter. Default false: when Beacon sits on a private network
+	// behind a proxy you don't control, a forged XFF could bypass the
+	// limiter. Set true only when the proxy rewrites XFF and your network
+	// prevents direct reach to :4680.
+	TrustXFF bool `yaml:"trust_xff"`
 }
 
 type ServerConfig struct {
@@ -131,6 +141,13 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("BEACON_DATABASE_SCHEMA"); v != "" {
 		cfg.Database.Schema = v
 	}
+	if v := os.Getenv("BEACON_INGEST_TRUST_XFF"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("BEACON_INGEST_TRUST_XFF: %w", err)
+		}
+		cfg.Ingest.TrustXFF = b
+	}
 	return nil
 }
 
@@ -181,6 +198,9 @@ func mergeNonZero(dst, src *Config) {
 	}
 	if len(src.Baseline.Windows) > 0 {
 		dst.Baseline.Windows = src.Baseline.Windows
+	}
+	if src.Ingest.TrustXFF {
+		dst.Ingest.TrustXFF = true
 	}
 }
 

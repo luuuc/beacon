@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -194,8 +195,9 @@ func parseActorID(raw json.RawMessage) (int64, error) {
 }
 
 // extractInt32 pulls a numeric field from a properties map, accepting the
-// Go types that a JSON decoder might produce (float64 default, plus the
-// fallbacks someone building the map by hand would use).
+// Go types a JSON decoder might produce. Values outside the int32 range
+// are rejected rather than silently truncated — a duration_ms of 2^31+1
+// would otherwise land in the DB as a negative number.
 func extractInt32(props map[string]any, key string) (int32, bool, error) {
 	if props == nil {
 		return 0, false, nil
@@ -204,22 +206,33 @@ func extractInt32(props map[string]any, key string) (int32, bool, error) {
 	if !ok {
 		return 0, false, nil
 	}
+	var n int64
 	switch x := v.(type) {
 	case float64:
-		return int32(x), true, nil
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return 0, true, fmt.Errorf("not a finite number")
+		}
+		if x != math.Trunc(x) {
+			return 0, true, fmt.Errorf("expected integer, got fractional %v", x)
+		}
+		n = int64(x)
 	case int:
-		return int32(x), true, nil
+		n = int64(x)
 	case int32:
 		return x, true, nil
 	case int64:
-		return int32(x), true, nil
+		n = x
 	case json.Number:
-		n, err := x.Int64()
+		m, err := x.Int64()
 		if err != nil {
 			return 0, true, err
 		}
-		return int32(n), true, nil
+		n = m
 	default:
 		return 0, true, fmt.Errorf("expected number, got %T", v)
 	}
+	if n < math.MinInt32 || n > math.MaxInt32 {
+		return 0, true, fmt.Errorf("value %d out of int32 range", n)
+	}
+	return int32(n), true, nil
 }

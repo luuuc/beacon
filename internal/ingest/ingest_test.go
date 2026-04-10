@@ -335,6 +335,59 @@ func TestIdempotencyNotRecordedOnFailure(t *testing.T) {
 	}
 }
 
+// failingInsertAdapter wraps memfake but forces InsertEvents to fail the
+// first N times, so the handler returns 503 — the storage-failure path
+// the real runbook cares about.
+type failingInsertAdapter struct {
+	*memfake.Fake
+	failures int
+}
+
+func (f *failingInsertAdapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]int64, error) {
+	if f.failures > 0 {
+		f.failures--
+		return nil, fmt.Errorf("simulated storage failure")
+	}
+	return f.Fake.InsertEvents(ctx, events)
+}
+
+func TestIdempotencyNotRecordedOnStorageFailure(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	adapter := &failingInsertAdapter{Fake: fake, failures: 1}
+	h := NewHandler(Config{}, adapter, nil)
+	h.now = func() time.Time { return fixedNow }
+
+	body := func() *bytes.Buffer {
+		return makeBatch(map[string]any{
+			"kind": "outcome", "name": "x", "created_at": fixedNow.Format(time.RFC3339),
+		})
+	}
+	setKey := func(r *http.Request) { r.Header.Set("Idempotency-Key", "boom") }
+
+	// First attempt fails at storage — 503, key must NOT be recorded.
+	rec := doPost(t, h, body(), setKey)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first = %d (%s)", rec.Code, rec.Body.String())
+	}
+	// Retry with the same key — must land normally (202, not duplicate).
+	rec = doPost(t, h, body(), setKey)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	mustDecode(t, rec.Body.Bytes(), &resp)
+	if dup, _ := resp["duplicate"].(bool); dup {
+		t.Errorf("retry after storage failure must not be marked duplicate: %v", resp)
+	}
+	events, _ := fake.ListEvents(context.Background(), beacondb.EventFilter{})
+	if len(events) != 1 {
+		t.Errorf("expected exactly 1 stored event after retry, got %d", len(events))
+	}
+}
+
 func TestClockSkewRewriteFuture(t *testing.T) {
 	h, fake := newTestHandler(t, Config{})
 	future := fixedNow.Add(2 * time.Hour).Format(time.RFC3339)
@@ -399,11 +452,13 @@ func TestClientIP(t *testing.T) {
 		name     string
 		mutate   func(*http.Request)
 		remote   string
+		trustXFF bool
 		want     string
 	}{
-		{"remoteaddr host:port", nil, "192.0.2.5:42", "192.0.2.5"},
-		{"xff single", func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.9") }, "10.0.0.1:1", "203.0.113.9"},
-		{"xff chain", func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1") }, "10.0.0.1:1", "203.0.113.9"},
+		{"remoteaddr host:port", nil, "192.0.2.5:42", false, "192.0.2.5"},
+		{"xff ignored by default", func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.9") }, "10.0.0.1:1", false, "10.0.0.1"},
+		{"xff trusted when enabled", func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.9") }, "10.0.0.1:1", true, "203.0.113.9"},
+		{"xff chain first hop", func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1") }, "10.0.0.1:1", true, "203.0.113.9"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -412,7 +467,7 @@ func TestClientIP(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(req)
 			}
-			if got := clientIP(req); got != tc.want {
+			if got := clientIP(req, tc.trustXFF); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})

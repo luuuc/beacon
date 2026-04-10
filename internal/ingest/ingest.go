@@ -35,6 +35,11 @@ type Config struct {
 	MaxBodyBytes      int64
 	RatePerSecond     float64
 	IdempotencyTTL    time.Duration
+	// TrustXFF controls whether X-Forwarded-For is read when deriving the
+	// per-IP rate-limiter key. Default false: a forged header could
+	// otherwise move a caller to an unbucketed slot. Enable only behind a
+	// proxy that rewrites XFF and a network that prevents direct reach.
+	TrustXFF bool
 }
 
 func (c Config) withDefaults() Config {
@@ -88,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := clientIP(r, h.cfg.TrustXFF)
 	if allowed, retry := h.rl.allow(ip); !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeError(w, http.StatusTooManyRequests, "rate limited")
@@ -160,12 +165,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"received": len(events)})
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
+func clientIP(r *http.Request, trustXFF bool) string {
+	if trustXFF {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.IndexByte(xff, ','); i > 0 {
+				return strings.TrimSpace(xff[:i])
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xff)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
