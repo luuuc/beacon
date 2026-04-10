@@ -63,11 +63,11 @@ require "beacon/rails"
 
 class RailsRailtieTest < Minitest::Test
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def teardown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_railtie_registers_expected_initializers
@@ -241,7 +241,7 @@ class RailsRailtieTest < Minitest::Test
   def test_middleware_defaults_sink_to_beacon_client
     require "rack/mock"
     Beacon.config.async = false  # no flusher thread for this test
-    Beacon.reset_client!
+    Beacon::Testing.reset_client!
     app = ->(_env) { [200, {}, ["ok"]] }
     mw  = Beacon::Middleware.new(app)  # no sink: → resolves to Beacon.client
     before = Beacon.client.queue.length

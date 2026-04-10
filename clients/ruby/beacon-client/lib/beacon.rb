@@ -18,17 +18,14 @@ module Beacon
     def configure
       yield config
       warn_if_unusable_endpoint
-      reset_client!
+      # Drop any existing client so the next Beacon.client call picks
+      # up the freshly-configured Configuration.
+      shutdown
       config
     end
 
     def config
       @config ||= Configuration.new
-    end
-
-    def reset_config!
-      shutdown
-      @config = Configuration.new
     end
 
     # Thread-safe lazy singleton. Two Puma threads racing on the first
@@ -45,13 +42,6 @@ module Beacon
     def client
       CLIENT_MUTEX.synchronize do
         @client ||= Client.new(config: config)
-      end
-    end
-
-    def reset_client!
-      CLIENT_MUTEX.synchronize do
-        @client&.shutdown
-        @client = nil
       end
     end
 

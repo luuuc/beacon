@@ -27,7 +27,7 @@ require "minitest/autorun"
 require "rack/mock"
 require "beacon"
 require "beacon/middleware"  # intentionally fails until card 14 lands
-require "beacon/test/null_sink"
+require "beacon/testing"
 
 class RackOverheadBench < Minitest::Test
   ITERATIONS    = 20_000
@@ -38,7 +38,7 @@ class RackOverheadBench < Minitest::Test
 
   def test_added_p95_under_fifty_microseconds
     bare         = REFERENCE_APP
-    instrumented = Beacon::Middleware.new(REFERENCE_APP, sink: Beacon::Test::NullSink.new)
+    instrumented = Beacon::Middleware.new(REFERENCE_APP, sink: Beacon::Testing::NullSink.new)
 
     request = Rack::MockRequest.env_for("/dashboard", method: "GET")
 

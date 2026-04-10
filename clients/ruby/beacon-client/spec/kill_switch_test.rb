@@ -12,7 +12,7 @@ class KillSwitchTest < Minitest::Test
   def setup
     @orig_disabled = ENV["BEACON_DISABLED"]
     ENV.delete("BEACON_DISABLED")
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def teardown
@@ -21,7 +21,7 @@ class KillSwitchTest < Minitest::Test
     else
       ENV.delete("BEACON_DISABLED")
     end
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   # --- Configuration.enabled? --------------------------------------------
@@ -37,14 +37,14 @@ class KillSwitchTest < Minitest::Test
 
   def test_env_disable_takes_effect_at_config_construction
     ENV["BEACON_DISABLED"] = "1"
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     refute Beacon.config.enabled?
   end
 
   def test_env_disable_accepts_truthy_values
     %w[1 true yes on TRUE YES ON].each do |val|
       ENV["BEACON_DISABLED"] = val
-      Beacon.reset_config!
+      Beacon::Testing.reset_config!
       refute Beacon.config.enabled?, "BEACON_DISABLED=#{val.inspect} should disable"
     end
   end
@@ -52,7 +52,7 @@ class KillSwitchTest < Minitest::Test
   def test_env_disable_rejects_falsy_values
     %w[0 false no off].each do |val|
       ENV["BEACON_DISABLED"] = val
-      Beacon.reset_config!
+      Beacon::Testing.reset_config!
       assert Beacon.config.enabled?, "BEACON_DISABLED=#{val.inspect} should not disable"
     end
   end
@@ -116,7 +116,7 @@ class KillSwitchTest < Minitest::Test
   # --- Nil endpoint warns once then degrades -----------------------------
 
   def test_nil_endpoint_logs_single_warning_from_configure
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     out = capture_stderr do
       Beacon.configure { |c| c.endpoint = nil }
     end
@@ -124,7 +124,7 @@ class KillSwitchTest < Minitest::Test
   end
 
   def test_nil_endpoint_no_warnings_during_requests
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     capture_stderr do
       Beacon.configure { |c| c.endpoint = nil }
     end
@@ -142,7 +142,7 @@ class KillSwitchTest < Minitest::Test
   # --- Thread-safe singleton init ----------------------------------------
 
   def test_racing_threads_produce_exactly_one_client_and_one_flusher
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.endpoint = "http://127.0.0.1:1"  # valid URI, flusher will fail silently
       c.async    = true

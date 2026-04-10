@@ -1,18 +1,17 @@
 require "test_helper"
 require "stringio"
 require "beacon"
-require "beacon/test/fake_transport"
 
 class FlusherTest < Minitest::Test
   ZERO_BACKOFF = [0, 0, 0, 0, 0].freeze
 
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.async          = false
       c.flush_interval = 0.05
     end
-    @transport = Beacon::Test::FakeTransport.new
+    @transport = Beacon::Testing::FakeTransport.new
     @client    = Beacon::Client.new(config: Beacon.config, transport: @transport, autostart: false)
     @flusher   = Beacon::Flusher.new(@client, transport: @transport, backoff: ZERO_BACKOFF)
   end
@@ -20,7 +19,7 @@ class FlusherTest < Minitest::Test
   def teardown
     @flusher.stop
     @client.shutdown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_flush_now_drains_queue_and_serializes_to_json

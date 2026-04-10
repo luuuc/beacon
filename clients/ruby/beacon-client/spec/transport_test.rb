@@ -97,7 +97,7 @@ end
 
 class TransportTest < Minitest::Test
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     @server = FakeHttpServer.new
     Beacon.configure do |c|
       c.endpoint        = "http://127.0.0.1:#{@server.port}"
@@ -114,7 +114,7 @@ class TransportTest < Minitest::Test
     # can exit cleanly. Otherwise @thread.join spins for a full second.
     @transport.after_fork rescue nil
     @server.stop
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_sets_user_agent_header

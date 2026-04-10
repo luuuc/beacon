@@ -1,6 +1,5 @@
 require "test_helper"
 require "beacon"
-require "beacon/test/fake_transport"
 
 class ClientTest < Minitest::Test
   FakeUser = Struct.new(:id) do
@@ -8,19 +7,19 @@ class ClientTest < Minitest::Test
   end
 
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.environment = "test"
       c.deploy_sha  = "abc123"
       c.async       = false  # don't start a real flusher in tests
     end
-    @transport = Beacon::Test::FakeTransport.new
+    @transport = Beacon::Testing::FakeTransport.new
     @client    = Beacon::Client.new(config: Beacon.config, transport: @transport, autostart: false)
   end
 
   def teardown
     @client.shutdown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_track_builds_outcome_event

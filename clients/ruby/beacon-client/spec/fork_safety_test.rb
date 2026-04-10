@@ -1,7 +1,6 @@
 require "test_helper"
 require "socket"
 require "beacon"
-require "beacon/test/fake_transport"
 require "beacon/transport"
 
 # This test simulates the Puma-clustered case: the parent boots a Beacon
@@ -13,18 +12,18 @@ require "beacon/transport"
 class ForkSafetyTest < Minitest::Test
   def setup
     skip "Process.fork not available" unless Process.respond_to?(:fork)
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.async          = true
       c.flush_interval = 0.05
     end
-    @transport = Beacon::Test::FakeTransport.new
+    @transport = Beacon::Testing::FakeTransport.new
     @client    = Beacon::Client.new(config: Beacon.config, transport: @transport)
   end
 
   def teardown
     @client&.shutdown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_child_has_isolated_queue_and_live_flusher

@@ -1,15 +1,14 @@
 require "test_helper"
 require "beacon"
-require "beacon/test/fake_transport"
 
 class StatsTest < Minitest::Test
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.async          = false
       c.flush_interval = 0.05
     end
-    @transport = Beacon::Test::FakeTransport.new
+    @transport = Beacon::Testing::FakeTransport.new
     @client    = Beacon::Client.new(config: Beacon.config, transport: @transport, autostart: false)
     # Swap the global client so Beacon.stats reads our instance.
     Beacon.instance_variable_set(:@client, @client)
@@ -17,7 +16,7 @@ class StatsTest < Minitest::Test
 
   def teardown
     @client&.shutdown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_stats_returns_documented_shape
@@ -43,7 +42,7 @@ class StatsTest < Minitest::Test
   end
 
   def test_stats_when_disabled
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure { |c| c.enabled = false }
     Beacon.instance_variable_set(:@client, Beacon::Client.new(config: Beacon.config, autostart: false))
     stats = Beacon.stats

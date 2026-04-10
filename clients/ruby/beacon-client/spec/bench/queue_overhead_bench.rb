@@ -1,7 +1,7 @@
 # Beacon — Rack overhead benchmark (real Queue path).
 #
 # Card 9. The sibling bench, `rack_overhead_bench.rb`, measures the
-# middleware against `Beacon::Test::NullSink` — a sink that does
+# middleware against `Beacon::Testing::NullSink` — a sink that does
 # nothing. That's the LOWER bound: the absolute floor of what the
 # middleware can achieve if the sink is free. It's useful but it
 # doesn't match production, because production uses `Beacon::Client`,
@@ -32,7 +32,7 @@ require "minitest/autorun"
 require "rack/mock"
 require "beacon"
 require "beacon/middleware"
-require "beacon/test/fake_transport"
+require "beacon/testing"
 
 class QueueOverheadBench < Minitest::Test
   ITERATIONS      = 20_000
@@ -42,20 +42,20 @@ class QueueOverheadBench < Minitest::Test
   REFERENCE_APP = ->(_env) { [200, { "content-type" => "text/plain" }, ["ok"]] }
 
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.environment     = "bench"
       c.flush_interval  = 0.05
       c.flush_threshold = 100
       c.async           = true
     end
-    @transport = Beacon::Test::FakeTransport.new
+    @transport = Beacon::Testing::FakeTransport.new
     @client    = Beacon::Client.new(config: Beacon.config, transport: @transport)
   end
 
   def teardown
     @client&.shutdown
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
   end
 
   def test_added_p95_under_fifty_microseconds_through_real_queue

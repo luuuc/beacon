@@ -1,18 +1,17 @@
 require "test_helper"
 require "rack/mock"
 require "beacon/middleware"
-require "beacon/test/null_sink"
 
 class MiddlewareTest < Minitest::Test
   OK_APP = ->(_env) { [200, { "content-type" => "text/plain" }, ["ok"]] }
 
   def setup
-    Beacon.reset_config!
+    Beacon::Testing.reset_config!
     Beacon.configure do |c|
       c.environment = "test"
       c.deploy_sha  = "deadbeef"
     end
-    @sink = Beacon::Test::NullSink.new(record: true)
+    @sink = Beacon::Testing::NullSink.new(record: true)
   end
 
   def test_perf_event_emitted_with_normalized_name

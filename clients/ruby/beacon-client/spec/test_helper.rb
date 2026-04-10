@@ -3,6 +3,7 @@ $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "minitest/autorun"
 require "json"
 require "beacon"
+require "beacon/testing"
 
 module BeaconTestHelper
   FIXTURES_PATH = File.expand_path("../../../../spec/fixtures.json", __dir__)
