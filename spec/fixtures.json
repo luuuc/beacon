@@ -1,0 +1,302 @@
+{
+  "$schema": "beacon-fixtures-v1",
+  "description": "Canonical cross-client fixtures for Beacon. Loaded by the Go server's conformance tests and by every client (starting with beacon-client / Ruby) in CI. If a client disagrees with a fixture, the client is wrong.",
+  "source_of_truth": "doc/definition/06-http-api.md",
+
+  "fingerprint": {
+    "description": "Fingerprint algorithm: SHA1(exception_class + '|' + first_app_frame_path). Line numbers and method names are excluded — only the file path. Output is lowercase hex.",
+    "cases": [
+      {
+        "name": "basic NoMethodError",
+        "exception_class": "NoMethodError",
+        "first_app_frame": "app/controllers/checkout_controller.rb:42",
+        "expected_fingerprint": "3f84d36296d870da0f050661a5d21943ce2a55cb"
+      },
+      {
+        "name": "same file different line produces same fingerprint",
+        "notes": "Cosmetic edits above the failing line must not shatter grouping across deploys. Line 42 and line 99 in the same file must hash identically.",
+        "exception_class": "NoMethodError",
+        "first_app_frame": "app/controllers/checkout_controller.rb:99",
+        "expected_fingerprint": "3f84d36296d870da0f050661a5d21943ce2a55cb"
+      },
+      {
+        "name": "different class same frame → different fingerprint",
+        "exception_class": "ArgumentError",
+        "first_app_frame": "app/controllers/checkout_controller.rb:42",
+        "expected_fingerprint": "22c342c278a3be0e635d77e01fbdf8679a41ee8e"
+      },
+      {
+        "name": "namespaced class",
+        "exception_class": "ActiveRecord::RecordNotFound",
+        "first_app_frame": "app/models/user.rb:17",
+        "expected_fingerprint": "85e098508cdc04c75a0c0bf559872e0d889a5219"
+      },
+      {
+        "name": "different file → different fingerprint",
+        "exception_class": "NoMethodError",
+        "first_app_frame": "app/models/user.rb:10",
+        "expected_fingerprint": "6f97f236c5e375dba734a3394c35b0f68f8d14b3"
+      },
+      {
+        "name": "non-ruby class name (Go-style)",
+        "exception_class": "*runtime.Error",
+        "first_app_frame": "cmd/api/main.go:55",
+        "expected_fingerprint": "0522ad5e4c058c2b295b0498b9331433464d85e6"
+      },
+      {
+        "name": "no line number on frame",
+        "notes": "Clients that can't determine the line number must still produce a stable hash using just the path.",
+        "exception_class": "NoMethodError",
+        "first_app_frame": "app/controllers/checkout_controller.rb",
+        "expected_fingerprint": "3f84d36296d870da0f050661a5d21943ce2a55cb"
+      }
+    ]
+  },
+
+  "path_normalization": {
+    "description": "Client-side path normalization fallback per 06-http-api.md. Framework route templates (Rails routes, Express req.route.path, FastAPI route.path) should be preferred when available. When not available, clients MUST apply this fallback to produce a normalized perf metric name of the form '<METHOD> <normalized_path>'.",
+    "cases": [
+      {
+        "name": "bare path",
+        "method": "GET",
+        "raw_path": "/dashboard",
+        "expected_name": "GET /dashboard"
+      },
+      {
+        "name": "numeric id",
+        "method": "GET",
+        "raw_path": "/users/42",
+        "expected_name": "GET /users/:id"
+      },
+      {
+        "name": "uuid id",
+        "method": "POST",
+        "raw_path": "/api/sessions/7f9a1234-5678-49ab-cdef-0123456789ab/close",
+        "expected_name": "POST /api/sessions/:uuid/close"
+      },
+      {
+        "name": "opaque token",
+        "method": "GET",
+        "raw_path": "/share/abcdefghijklmnopqrstuvwx",
+        "expected_name": "GET /share/:token"
+      },
+      {
+        "name": "multiple numeric ids",
+        "method": "GET",
+        "raw_path": "/users/42/posts/17",
+        "expected_name": "GET /users/:id/posts/:id"
+      },
+      {
+        "name": "lowercase method uppercased",
+        "method": "get",
+        "raw_path": "/healthz",
+        "expected_name": "GET /healthz"
+      },
+      {
+        "name": "trailing slash preserved",
+        "method": "GET",
+        "raw_path": "/api/",
+        "expected_name": "GET /api/"
+      },
+      {
+        "name": "query string stripped",
+        "method": "GET",
+        "raw_path": "/search?q=foo",
+        "expected_name": "GET /search"
+      },
+      {
+        "name": "non-numeric word segment preserved",
+        "method": "GET",
+        "raw_path": "/users/me",
+        "expected_name": "GET /users/me"
+      },
+      {
+        "name": "short alphanumeric segment preserved",
+        "method": "GET",
+        "raw_path": "/dashboard/abc123",
+        "expected_name": "GET /dashboard/abc123"
+      }
+    ]
+  },
+
+  "envelope": {
+    "description": "Example minimal valid and invalid POST /events envelopes. Clients should use these to verify their serializer and the server's validation. These are not asserted against the Go reference server in the Go conformance test — they're for client-side unit tests.",
+    "cases": [
+      {
+        "name": "outcome event minimal",
+        "valid": true,
+        "event": {
+          "kind": "outcome",
+          "name": "signup.completed",
+          "created_at": "2026-04-10T12:00:00Z"
+        }
+      },
+      {
+        "name": "outcome event with context + properties",
+        "valid": true,
+        "event": {
+          "kind": "outcome",
+          "name": "signup.completed",
+          "created_at": "2026-04-10T12:00:00Z",
+          "actor_type": "User",
+          "actor_id": 42,
+          "properties": { "plan": "pro" },
+          "context": { "request_id": "abc-123", "deploy_sha": "9f3a2c1", "environment": "production" }
+        }
+      },
+      {
+        "name": "perf event requires duration_ms",
+        "valid": true,
+        "event": {
+          "kind": "perf",
+          "name": "GET /dashboard",
+          "created_at": "2026-04-10T12:00:00Z",
+          "properties": { "duration_ms": 187, "status": 200 }
+        }
+      },
+      {
+        "name": "error event requires fingerprint",
+        "valid": true,
+        "event": {
+          "kind": "error",
+          "name": "NoMethodError",
+          "created_at": "2026-04-10T12:00:00Z",
+          "properties": {
+            "fingerprint": "3f84d36296d870da0f050661a5d21943ce2a55cb",
+            "message": "undefined method `name' for nil:NilClass",
+            "first_app_frame": "app/controllers/checkout_controller.rb:42"
+          }
+        }
+      },
+      {
+        "name": "unknown kind is rejected",
+        "valid": false,
+        "event": {
+          "kind": "banana",
+          "name": "x",
+          "created_at": "2026-04-10T12:00:00Z"
+        },
+        "expected_error_contains": "kind must be outcome, perf, or error"
+      },
+      {
+        "name": "missing name is rejected",
+        "valid": false,
+        "event": {
+          "kind": "outcome",
+          "created_at": "2026-04-10T12:00:00Z"
+        },
+        "expected_error_contains": "name is required"
+      },
+      {
+        "name": "perf without duration_ms is rejected",
+        "valid": false,
+        "event": {
+          "kind": "perf",
+          "name": "GET /x",
+          "created_at": "2026-04-10T12:00:00Z",
+          "properties": {}
+        },
+        "expected_error_contains": "duration_ms is required"
+      },
+      {
+        "name": "error without fingerprint is rejected",
+        "valid": false,
+        "event": {
+          "kind": "error",
+          "name": "Boom",
+          "created_at": "2026-04-10T12:00:00Z",
+          "properties": {}
+        },
+        "expected_error_contains": "fingerprint is required"
+      }
+    ]
+  },
+
+  "batch_flush": {
+    "description": "Client-side async flusher trigger rules. beacon-client and any well-behaved client MUST flush a batch when the earliest of these conditions is met.",
+    "rules": [
+      {
+        "name": "size trigger",
+        "condition": "queue size reaches max_batch_size",
+        "default_value": 100,
+        "notes": "A client at steady state should send one batch every max_batch_size events."
+      },
+      {
+        "name": "age trigger",
+        "condition": "oldest queued event exceeds max_batch_age",
+        "default_value_seconds": 1,
+        "notes": "A low-traffic app should still see events appear within a second."
+      },
+      {
+        "name": "body size safety trigger",
+        "condition": "serialized batch JSON reaches 800 KB",
+        "notes": "Leaves headroom for the 1 MB server ceiling — flushing earlier avoids a 413 on a long-tail property."
+      },
+      {
+        "name": "shutdown flush",
+        "condition": "process receives SIGTERM or at_exit hook fires",
+        "notes": "Bounded wait (5s) so shutdown doesn't hang if beacon is unreachable."
+      }
+    ]
+  },
+
+  "unreachable_beacon": {
+    "description": "Client behavior when POST /events cannot reach the server. Beacon is observability, not durable messaging — data loss on a long outage is acceptable.",
+    "rules": [
+      {
+        "name": "transport error retries",
+        "condition": "connection refused / DNS failure / read timeout",
+        "behavior": "exponential backoff, 5 attempts max (200ms, 400ms, 800ms, 1.6s, 3.2s); then drop the batch and log at warn"
+      },
+      {
+        "name": "5xx retries",
+        "condition": "server returned 500/502/503/504",
+        "behavior": "same backoff as transport errors"
+      },
+      {
+        "name": "4xx does not retry",
+        "condition": "server returned 400/401/413",
+        "behavior": "drop the batch, log at error — the client is doing something wrong and retries will not help"
+      },
+      {
+        "name": "429 honors Retry-After",
+        "condition": "server returned 429",
+        "behavior": "sleep for Retry-After seconds (default 1), then retry once; drop after the retry"
+      },
+      {
+        "name": "queue is bounded",
+        "condition": "in-process queue reaches max_queue_size (default 10_000 events)",
+        "behavior": "drop incoming events rather than grow unboundedly; increment a dropped counter the app can inspect"
+      },
+      {
+        "name": "circuit breaker opens after repeated failures",
+        "condition": "5 consecutive batch failures",
+        "behavior": "stop attempting for 30 seconds, then try a single test post before reopening the gate"
+      }
+    ]
+  },
+
+  "deploy_sha_propagation": {
+    "description": "deploy_sha flows from the client's initializer through every event's context block. The rollup worker reads it from beacon_events.context to correlate deploy baselines.",
+    "cases": [
+      {
+        "name": "config sets context",
+        "initializer": { "deploy_sha": "9f3a2c1" },
+        "expected_context_field": "deploy_sha",
+        "expected_context_value": "9f3a2c1"
+      },
+      {
+        "name": "env override wins",
+        "initializer": { "deploy_sha": "default" },
+        "env": { "GIT_SHA": "env-override" },
+        "notes": "Clients should prefer env vars like GIT_SHA/KAMAL_VERSION when set so a deploy reflects the actual commit.",
+        "expected_context_value": "env-override"
+      },
+      {
+        "name": "unset deploy_sha is absent, not empty string",
+        "initializer": {},
+        "expected_context_field_present": false
+      }
+    ]
+  }
+}
