@@ -1,0 +1,67 @@
+require "test_helper"
+require "beacon"
+require "beacon/test/fake_transport"
+
+class ClientTest < Minitest::Test
+  FakeUser = Struct.new(:id) do
+    def self.name; "User"; end
+  end
+
+  def setup
+    Beacon.reset_config!
+    Beacon.configure do |c|
+      c.environment = "test"
+      c.deploy_sha  = "abc123"
+      c.async       = false  # don't start a real flusher in tests
+    end
+    @transport = Beacon::Test::FakeTransport.new
+    @client    = Beacon::Client.new(config: Beacon.config, transport: @transport, autostart: false)
+  end
+
+  def teardown
+    @client.shutdown
+    Beacon.reset_config!
+  end
+
+  def test_track_builds_outcome_event
+    @client.track("signup.completed", plan: "pro")
+    event = @client.queue.drain(1).first
+
+    assert_equal :outcome, event[:kind]
+    assert_equal "signup.completed", event[:name]
+    assert_equal({ plan: "pro" }, event[:properties])
+    assert_equal "test",   event[:context][:environment]
+    assert_equal "abc123", event[:context][:deploy_sha]
+    assert_equal "ruby",   event[:context][:language]
+    assert_kind_of Integer, event[:created_at_ns]
+  end
+
+  def test_user_shorthand_extracts_actor
+    user = FakeUser.new(42)
+    @client.track("signup.completed", user: user, plan: "pro")
+    event = @client.queue.drain(1).first
+
+    assert_equal "User", event[:actor_type]
+    assert_equal 42,     event[:actor_id]
+    assert_equal({ plan: "pro" }, event[:properties])
+    refute event[:properties].key?(:user)
+  end
+
+  def test_track_does_not_mutate_caller_hash
+    props = { user: FakeUser.new(1), plan: "pro" }
+    @client.track("e", props)
+    assert props.key?(:user), "caller's hash must not be mutated"
+  end
+
+  def test_outcomes_pillar_disabled
+    Beacon.config.pillars = [:perf, :errors]
+    @client.track("ignored", k: 1)
+    assert_equal 0, @client.queue.length
+  end
+
+  def test_track_failure_is_swallowed
+    bad = Object.new
+    def bad.dup; raise "boom"; end
+    assert_nil @client.track("e", bad)
+  end
+end
