@@ -66,6 +66,10 @@ module Beacon
         @pid     = Process.pid
         @queue   = Beacon::Queue.new(max: @config.queue_size)
         @flusher = nil
+        # Drop any socket FD inherited from the parent — sharing one
+        # across parent and child is undefined. The transport will
+        # re-open lazily on the child's first flush.
+        @transport.after_fork if @transport.respond_to?(:after_fork)
         start_flusher if @config.async
       end
     end
