@@ -13,16 +13,20 @@ module Beacon
 
     def initialize(config:, transport: nil, autostart: true)
       @config    = config
-      @transport = transport || Transport::Http.new(config)
+      @enabled   = config.enabled?
+      # When disabled, build no transport and no flusher — the no-op
+      # path does not touch the network and does not spawn threads.
+      @transport = transport || (@enabled ? Transport::Http.new(config) : nil)
       @queue     = Beacon::Queue.new(max: config.queue_size)
       @pid       = Process.pid
       @mutex     = Mutex.new
-      start_flusher if autostart && config.async
+      start_flusher if autostart && @enabled && config.async
     end
 
     # Outcomes API. The :user shorthand is the only magic — everything else
     # in the properties hash flows through unchanged.
     def track(name, properties = {})
+      return nil unless @enabled
       return nil unless @config.pillar?(:outcomes)
       props      = properties.dup
       actor_type, actor_id = extract_actor(props)
@@ -43,10 +47,15 @@ module Beacon
 
     # Sink interface — what middleware and integrations push into.
     def push(event)
+      return nil unless @enabled
       ensure_forked!
       @queue.push(event)
     end
     alias << push
+
+    def enabled?
+      @enabled
+    end
 
     def flush
       @flusher&.flush_now
@@ -70,7 +79,7 @@ module Beacon
         # across parent and child is undefined. The transport will
         # re-open lazily on the child's first flush.
         @transport.after_fork if @transport.respond_to?(:after_fork)
-        start_flusher if @config.async
+        start_flusher if @enabled && @config.async
       end
     end
 

@@ -46,6 +46,7 @@ module Beacon
       @logger = logger
       @app_root = config.app_root.to_s.chomp("/").freeze
 
+      @enabled        = config.enabled?
       @capture_perf   = config.pillar?(:perf)
       @capture_errors = config.pillar?(:errors)
 
@@ -69,6 +70,11 @@ module Beacon
     end
 
     def call(env)
+      # Kill-switch fast path: a disabled middleware is a pure passthrough
+      # with zero allocations beyond this branch. This is what makes
+      # BEACON_DISABLED=1 truly free at request time.
+      return @app.call(env) unless @enabled
+
       start_ns = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
       begin
         status, headers, body = @app.call(env)
