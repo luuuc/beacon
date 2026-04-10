@@ -17,7 +17,7 @@ module Beacon
       # When disabled, build no transport and no flusher — the no-op
       # path does not touch the network and does not spawn threads.
       @transport = transport || (@enabled ? Transport::Http.new(config) : nil)
-      @queue     = Beacon::Queue.new(max: config.queue_size)
+      @queue     = Beacon::Queue.new(max: config.queue_size, flush_threshold: config.flush_threshold)
       @pid       = Process.pid
       @mutex     = Mutex.new
       start_flusher if autostart && @enabled && config.async
@@ -73,7 +73,7 @@ module Beacon
     def after_fork
       @mutex.synchronize do
         @pid     = Process.pid
-        @queue   = Beacon::Queue.new(max: @config.queue_size)
+        @queue   = Beacon::Queue.new(max: @config.queue_size, flush_threshold: @config.flush_threshold)
         @flusher = nil
         # Drop any socket FD inherited from the parent — sharing one
         # across parent and child is undefined. The transport will

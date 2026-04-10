@@ -14,6 +14,12 @@ module Beacon
     CIRCUIT_OPEN_THRESHOLD  = 5
     DRAIN_BATCH             = 1_000
     SHUTDOWN_FLUSH_TIMEOUT  = 2.0
+    # Split serialized batches at this byte count. The Beacon server's
+    # /events endpoint limits any single request body to roughly 1 MB;
+    # 800 KB is a conservative ceiling that leaves headroom for headers
+    # and JSON framing. When a single flush produces more, we issue
+    # multiple POSTs rather than failing with 413.
+    BATCH_MAX_BYTES         = 800 * 1024
 
     def initialize(client, transport:, backoff: BACKOFF_SECONDS, log_throttle: nil)
       @client    = client
@@ -57,6 +63,7 @@ module Beacon
 
     def stop
       @stop = true
+      @client.queue.signal_all  # wake wait_and_drain from its condvar
       @thread&.join(SHUTDOWN_FLUSH_TIMEOUT)
       flush_now
       nil
@@ -70,7 +77,7 @@ module Beacon
       loop do
         events = @client.queue.drain(DRAIN_BATCH)
         break if events.empty?
-        send_batch(events)
+        send_events(events)
       end
     rescue => e
       log_rescue(e)
@@ -80,17 +87,49 @@ module Beacon
 
     def run_loop
       until @stop
-        sleep @config.flush_interval
+        # Card 8: wait_and_drain blocks on a ConditionVariable with
+        # the flush_interval as the timeout ceiling. Queue#push signals
+        # the condvar when size crosses flush_threshold, so bursty
+        # workloads flush early instead of waiting out the full
+        # interval. Low-traffic apps still flush every interval as a
+        # floor.
+        events = @client.queue.wait_and_drain(DRAIN_BATCH, @config.flush_interval)
+        break if @stop
         next if circuit_open?
-        events = @client.queue.drain(DRAIN_BATCH)
-        send_batch(events) unless events.empty?
+        send_events(events) unless events.empty?
       end
     rescue => e
       log_rescue(e)
     end
 
+    # Split one drain's worth of events into body-size-bounded POSTs.
+    # A single flush call may produce multiple send_batch calls when
+    # the serialized payload exceeds BATCH_MAX_BYTES — we do NOT drop
+    # events, we issue more POSTs. Serialize each event once, then
+    # walk the list accumulating a bytes budget.
+    def send_events(events)
+      serialized = events.map { |e| serialize_event(e) }
+      sizes      = serialized.map { |h| JSON.generate(h).bytesize }
+
+      batch = []
+      running_bytes = 0
+      envelope_overhead = JSON.generate(events: []).bytesize  # "{\"events\":[]}" = 13 bytes
+      per_item_overhead = 1  # comma separator between items
+      serialized.each_with_index do |event, i|
+        size = sizes[i] + per_item_overhead
+        if batch.any? && running_bytes + size + envelope_overhead > BATCH_MAX_BYTES
+          send_batch(batch)
+          batch = []
+          running_bytes = 0
+        end
+        batch << event
+        running_bytes += size
+      end
+      send_batch(batch) unless batch.empty?
+    end
+
     def send_batch(events)
-      payload         = serialize(events)
+      payload         = JSON.generate(events: events)
       idempotency_key = SecureRandom.uuid
 
       if post_with_retries(payload, idempotency_key)
@@ -149,10 +188,6 @@ module Beacon
         sleep(sleep_for) unless i == @backoff.length - 1
       end
       false
-    end
-
-    def serialize(events)
-      JSON.generate(events: events.map { |e| serialize_event(e) })
     end
 
     def serialize_event(event)

@@ -123,6 +123,38 @@ class FlusherTest < Minitest::Test
     def self.name; "FakeUserClass"; end
   end
 
+  def test_oversized_flush_splits_into_multiple_batches
+    # Drive the body-size splitter with events whose serialized form
+    # is big enough that two will exceed BATCH_MAX_BYTES (800 KB). We
+    # use ~500 KB of padding per event so any two together blow the
+    # cap and must ship in separate POSTs.
+    big_string = "x" * 500_000
+    3.times do |i|
+      @client.push({
+        kind: :outcome,
+        name: "evt#{i}",
+        created_at_ns: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
+        properties: { pad: big_string },
+      })
+    end
+    @flusher.flush_now
+    # 3 events × 500 KB each → at least 2 separate POSTs (likely 3,
+    # because each single event is big enough that adding a second
+    # would cross the cap).
+    assert_operator @transport.batches.length, :>=, 2,
+      "expected body-size splitter to produce multiple batches, got #{@transport.batches.length}"
+    # Every batch body must respect the 800 KB ceiling.
+    @transport.batches.each do |batch|
+      assert_operator batch[:body].bytesize, :<=, Beacon::Flusher::BATCH_MAX_BYTES,
+        "batch exceeded BATCH_MAX_BYTES: #{batch[:body].bytesize} bytes"
+    end
+    # And every event should still be accounted for across all batches.
+    total_events = @transport.batches.sum do |batch|
+      JSON.parse(batch[:body])["events"].length
+    end
+    assert_equal 3, total_events
+  end
+
   private
 
   def silence_warnings
