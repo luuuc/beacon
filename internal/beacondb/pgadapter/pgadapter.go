@@ -102,13 +102,17 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 	if len(events) == 0 {
 		return nil, nil
 	}
+
+	// Pipeline the whole batch into a single round-trip via pgx.Batch.
+	// Transaction semantics are kept so a mid-batch failure rolls everything
+	// back — matches the Adapter contract ("batch is atomic").
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	ids := make([]int64, len(events))
+	batch := &pgx.Batch{}
 	for i, e := range events {
 		props, err := marshalJSON(e.Properties)
 		if err != nil {
@@ -122,13 +126,23 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 		if !e.CreatedAt.IsZero() {
 			createdAt = e.CreatedAt
 		}
-		if err := tx.QueryRow(ctx, insertEventSQL,
+		batch.Queue(insertEventSQL,
 			string(e.Kind), e.Name, e.ActorType, e.ActorID,
 			nullableInt32(e.DurationMs), nullableInt32(e.Status),
 			e.Fingerprint, props, cx, createdAt,
-		).Scan(&ids[i]); err != nil {
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	ids := make([]int64, len(events))
+	for i := range events {
+		if err := br.QueryRow().Scan(&ids[i]); err != nil {
+			_ = br.Close()
 			return nil, fmt.Errorf("insert event[%d]: %w", i, err)
 		}
+	}
+	if err := br.Close(); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -241,18 +255,27 @@ func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	batch := &pgx.Batch{}
 	for i, m := range metrics {
 		dims, err := marshalJSON(m.Dimensions)
 		if err != nil {
 			return fmt.Errorf("metric[%d] dimensions: %w", i, err)
 		}
-		if _, err := tx.Exec(ctx, upsertMetricSQL,
+		batch.Queue(upsertMetricSQL,
 			string(m.Kind), m.Name, string(m.PeriodKind), m.PeriodWindow, m.PeriodStart,
 			m.Count, m.Sum, m.P50, m.P95, m.P99,
 			m.Fingerprint, dims, m.DimensionHash,
-		); err != nil {
+		)
+	}
+	br := tx.SendBatch(ctx, batch)
+	for i := range metrics {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
 			return fmt.Errorf("upsert metric[%d]: %w", i, err)
 		}
+	}
+	if err := br.Close(); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
