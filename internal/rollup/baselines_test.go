@@ -81,7 +81,10 @@ func TestTrailingBaselines_shorterWindowsExcludeOlderHours(t *testing.T) {
 	}
 }
 
-func TestTrailingBaselines_perfAveragesPercentiles(t *testing.T) {
+func TestTrailingBaselines_perfTotalsCountAndSum(t *testing.T) {
+	// Baselines totalize count and sum across the window. Percentiles are
+	// deliberately dropped (averaging p95s is not a real p95), so a perf
+	// baseline row carries count + sum only.
 	w, fake := newTestWorker(t, fixedNow)
 	thisHour := fixedNow.Truncate(time.Hour)
 	prevHour := thisHour.Add(-time.Hour)
@@ -110,16 +113,9 @@ func TestTrailingBaselines_perfAveragesPercentiles(t *testing.T) {
 	if b.Sum == nil || *b.Sum != 3000 {
 		t.Errorf("sum = %v, want 3000", b.Sum)
 	}
-	if b.P50 == nil || *b.P50 != 50.0 {
-		t.Errorf("p50 = %v, want 50", b.P50)
+	if b.P50 != nil || b.P95 != nil || b.P99 != nil {
+		t.Errorf("baseline should not carry percentiles: p50=%v p95=%v p99=%v", b.P50, b.P95, b.P99)
 	}
-	if b.P95 == nil || *b.P95 != 100.0 {
-		t.Errorf("p95 = %v, want 100", b.P95)
-	}
-	if b.P99 == nil || *b.P99 != 110.0 {
-		t.Errorf("p99 = %v, want 110", b.P99)
-	}
-	_ = w // silence
 }
 
 // ---------------------------------------------------------------------------

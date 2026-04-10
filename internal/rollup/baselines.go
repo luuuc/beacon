@@ -123,9 +123,13 @@ func (w *Worker) captureDeploymentBaselineAt(ctx context.Context, deployTime tim
 }
 
 // aggregateHourliesIntoBaselines folds a set of hourly metric rows into one
-// baseline row per (kind, name, fingerprint). Counts and sums are totaled;
-// percentiles are averaged (the simplest honest summary — a true aggregate
-// p95 would need the raw durations which are pruned after retention).
+// baseline row per (kind, name, fingerprint). Only count and sum survive
+// the fold: percentiles are deliberately dropped because a "baseline p95"
+// that is the average of 24 or 720 hourly p95 values is not a percentile of
+// anything — it cannot be honestly recovered without the raw durations,
+// which retention has already pruned. Readers that want a baseline
+// percentile should compare current windows against the trailing windows
+// directly, as GetPerfEndpoints does.
 func aggregateHourliesIntoBaselines(hourlies []beacondb.Metric, periodStart time.Time, periodWindow string) []beacondb.Metric {
 	type groupKey struct {
 		kind        beacondb.Kind
@@ -134,12 +138,9 @@ func aggregateHourliesIntoBaselines(hourlies []beacondb.Metric, periodStart time
 	}
 
 	type accum struct {
-		count         int64
-		sum           float64
-		hasSum        bool
-		p50s          []float64
-		p95s          []float64
-		p99s          []float64
+		count  int64
+		sum    float64
+		hasSum bool
 	}
 
 	groups := map[groupKey]*accum{}
@@ -154,15 +155,6 @@ func aggregateHourliesIntoBaselines(hourlies []beacondb.Metric, periodStart time
 		if m.Sum != nil {
 			a.sum += *m.Sum
 			a.hasSum = true
-		}
-		if m.P50 != nil {
-			a.p50s = append(a.p50s, *m.P50)
-		}
-		if m.P95 != nil {
-			a.p95s = append(a.p95s, *m.P95)
-		}
-		if m.P99 != nil {
-			a.p99s = append(a.p99s, *m.P99)
 		}
 	}
 
@@ -185,32 +177,9 @@ func aggregateHourliesIntoBaselines(hourlies []beacondb.Metric, periodStart time
 			s := a.sum
 			bm.Sum = &s
 		}
-		if len(a.p50s) > 0 {
-			v := meanFloat(a.p50s)
-			bm.P50 = &v
-		}
-		if len(a.p95s) > 0 {
-			v := meanFloat(a.p95s)
-			bm.P95 = &v
-		}
-		if len(a.p99s) > 0 {
-			v := meanFloat(a.p99s)
-			bm.P99 = &v
-		}
 		out = append(out, bm)
 	}
 	return out
-}
-
-func meanFloat(xs []float64) float64 {
-	if len(xs) == 0 {
-		return 0
-	}
-	var s float64
-	for _, x := range xs {
-		s += x
-	}
-	return s / float64(len(xs))
 }
 
 // RecomputeRange re-derives every hour bucket touched by events in [since, now].
