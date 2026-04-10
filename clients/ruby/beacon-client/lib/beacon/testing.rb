@@ -72,21 +72,26 @@ module Beacon
       end
     end
 
-    # Drop the memoized Configuration and any associated Client. Use in
-    # test setup so each test gets a fresh Configuration.
+    # Drop the memoized Configuration and any associated Client. Use
+    # in test setup so each test gets a fresh Configuration.
+    #
+    # Reaches into Beacon's internals via instance_variable_set
+    # because we deliberately removed `Beacon.reset_config!` from the
+    # production surface (Card 10) — test-only machinery should not
+    # live on the main module. If you're tempted to "clean this up"
+    # by adding `reset_config!` back to Beacon, read the pitch first.
     def self.reset_config!
       Beacon.shutdown
       Beacon.instance_variable_set(:@config, nil)
     end
 
-    # Shutdown the memoized Client without touching Configuration. Use
-    # when a test needs to replace Beacon.client without changing config.
+    # Alias for Beacon.shutdown, kept as a separate name because
+    # `reset_client!` reads correctly at call sites that are
+    # logically "replace the client without changing config" —
+    # Beacon.shutdown at those sites would be semantically correct
+    # but misleading (it sounds like tearing down the whole gem).
     def self.reset_client!
-      Beacon::CLIENT_MUTEX.synchronize do
-        client = Beacon.instance_variable_get(:@client)
-        client&.shutdown
-        Beacon.instance_variable_set(:@client, nil)
-      end
+      Beacon.shutdown
     end
   end
 end

@@ -15,6 +15,8 @@ One initializer wires up three pillars:
 gem "beacon-client"
 ```
 
+> **Do not add `require: "beacon/testing"` in your Gemfile.** The `beacon/testing` file contains test helpers (`NullSink`, `FakeTransport`, `Beacon::Testing.reset_config!`) that should only be loaded from `spec/test_helper.rb` — loading them into production Rails boot is a footgun that leaks test-only classes into your host namespace. `beacon-client` itself is safe to auto-require; only `beacon/testing` is not.
+
 ## Configure
 
 ```ruby
