@@ -1,0 +1,55 @@
+name: bench
+
+on:
+  push:
+    branches: [main, feat/bootstrap]
+  pull_request:
+
+jobs:
+  pg-bench:
+    name: beacon-bench against Postgres
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: beacon
+          POSTGRES_PASSWORD: beacon
+          POSTGRES_DB: beacon_bench
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U beacon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build beacon + beacon-bench
+        run: |
+          mkdir -p bin
+          go build -o bin/beacon ./cmd/beacon
+          go build -o bin/beacon-bench ./cmd/beacon-bench
+
+      - name: Run unit + conformance tests
+        env:
+          BEACON_TEST_POSTGRES_URL: "postgres://beacon:beacon@127.0.0.1:5432/beacon_bench?sslmode=disable"
+        run: go test ./...
+
+      - name: Run beacon-bench (60s, 100 events/sec, Postgres)
+        run: |
+          ./bin/beacon-bench \
+            -binary ./bin/beacon \
+            -duration 60s \
+            -rate 100 \
+            -max-rss-mb 100 \
+            -max-cpu-pct 25 \
+            -postgres-url "postgres://beacon:beacon@127.0.0.1:5432/beacon_bench?sslmode=disable"
