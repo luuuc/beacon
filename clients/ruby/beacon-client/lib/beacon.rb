@@ -50,6 +50,8 @@ module Beacon
   end
 end
 
+require "beacon/rails" if defined?(::Rails::Railtie)
+
 at_exit do
   Beacon.shutdown if Beacon.instance_variable_get(:@client)
 end

@@ -20,7 +20,8 @@ module Beacon
   class Middleware
     LANGUAGE = "ruby".freeze
 
-    def initialize(app, sink:, config: Beacon.config, logger: nil)
+    def initialize(app, sink: nil, config: Beacon.config, logger: nil)
+      sink ||= Beacon.client
       @app    = app
       @sink   = sink
       @config = config
