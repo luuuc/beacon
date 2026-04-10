@@ -27,28 +27,29 @@ Beacon.configure do |c|
 end
 ```
 
-In a Rack/Rails app, mount the middleware:
+In a Rails app, that's **all** you write. The gem ships a Railtie that:
+
+- Inserts `Beacon::Middleware` into the stack, right after `ActionDispatch::DebugExceptions` (so host errors flow through Beacon before Rails renders them).
+- Auto-installs the ActiveJob and ActionMailer integrations — no `require "beacon/integrations/..."` needed.
+- Installs a `Process._fork` hook that runs `Beacon.client.after_fork` in every fork child, so clustered Puma / Unicorn / Passenger workers get their own flusher thread automatically. **No manual `on_worker_boot` needed.**
+
+In a plain Rack app (no Rails), mount the middleware manually:
 
 ```ruby
-# config/application.rb
-config.middleware.use Beacon::Middleware, sink: Beacon.client
+# config.ru
+require "beacon"
+require "beacon/middleware"
+use Beacon::Middleware
 ```
 
-For background jobs and mailers (opt-in):
+### A note on the fork hook
 
-```ruby
-require "beacon/integrations/active_job"
-require "beacon/integrations/action_mailer"
-Beacon::Integrations::ActiveJob.install
-Beacon::Integrations::ActionMailer.install
-```
-
-For Puma in clustered mode:
-
-```ruby
-# config/puma.rb
-on_worker_boot { Beacon.client.after_fork }
-```
+Because the Railtie prepends `Process._fork`, Beacon's `after_fork` runs in
+**every** forked child in the process — not just Puma workers. Short-lived
+forks like `rails runner`, `system`, and `Open3` subshells will briefly
+initialize Beacon in the child. The reinit is idempotent and the flusher is
+bounded, but it's a global behavior worth knowing about when you see
+`beacon-flusher` threads show up in unexpected places.
 
 ## Usage
 
