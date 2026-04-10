@@ -134,6 +134,50 @@ class MiddlewareTest < Minitest::Test
     refute_equal 0, seen.size, "sanity check: fingerprints must actually land in the cache"
   end
 
+  def test_stack_trace_is_truncated_to_sixteen_kilobytes
+    # A 500-frame synthetic backtrace easily exceeds the 16 KB property
+    # limit. Keep as many leading frames as fit, append the truncation
+    # marker, never exceed the cap.
+    fake_locations = Array.new(500) do |i|
+      loc = Object.new
+      loc.define_singleton_method(:path)          { "/gems/fake/lib/file#{i}.rb" }
+      loc.define_singleton_method(:absolute_path) { nil }
+      loc.define_singleton_method(:lineno)        { 10 + i }
+      loc.define_singleton_method(:base_label)    { "method_#{i}" }
+      loc
+    end
+    err = RuntimeError.new("boom")
+    err.define_singleton_method(:backtrace_locations) { fake_locations }
+
+    mw  = Beacon::Middleware.new(->(_) { raise err }, sink: @sink)
+    env = Rack::MockRequest.env_for("/x", method: "GET")
+    assert_raises(RuntimeError) { mw.call(env) }
+
+    error = @sink.events.find { |e| e[:kind] == :error }
+    stack = error[:properties][:stack_trace]
+    refute_nil stack, "expected a stack_trace property"
+    assert_operator stack.bytesize, :<=, Beacon::Middleware::STACK_TRACE_MAX_BYTES
+    assert stack.end_with?("… (truncated)"), "expected truncation marker"
+    assert_includes stack, "file0.rb:10:in `method_0'", "must keep leading frames"
+  end
+
+  def test_first_app_frame_uses_backtrace_locations
+    # Rather than hand-building a full StandardError with a synthetic
+    # backtrace_locations, raise a real exception with a frame from this
+    # test file and assert that the captured first_app_frame is an app
+    # frame containing this file's path and a line number.
+    Beacon.config.app_root = File.expand_path("..", __dir__)  # the gem root
+    mw  = Beacon::Middleware.new(->(_) { raise RuntimeError, "boom" }, sink: @sink)
+    env = Rack::MockRequest.env_for("/x", method: "GET")
+    assert_raises(RuntimeError) { mw.call(env) }
+    error = @sink.events.find { |e| e[:kind] == :error }
+    frame = error[:properties][:first_app_frame]
+    # The first app frame should land in spec/ (the host "app") with a
+    # line number suffix in the new `path:lineno` shape.
+    assert_match(%r{\Aspec/.+\.rb:\d+\z}, frame,
+      "expected app-relative frame with lineno suffix, got #{frame.inspect}")
+  end
+
   def test_middleware_caches_tolerate_concurrent_inserts
     mw = Beacon::Middleware.new(OK_APP, sink: @sink)
     threads = 16

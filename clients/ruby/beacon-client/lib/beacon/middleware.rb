@@ -21,6 +21,23 @@ module Beacon
   class Middleware
     LANGUAGE = "ruby".freeze
 
+    # Upper bound for the stack_trace property. The HTTP API limits any
+    # single property value to 16 KB — a 500-frame backtrace easily
+    # exceeds that. We keep as many leading frames as fit and append a
+    # truncation marker so readers see the trace was clipped.
+    STACK_TRACE_MAX_BYTES = 16 * 1024
+    STACK_TRACE_TRUNCATED_SUFFIX = "\n… (truncated)".freeze
+
+    # Paths we treat as "not app code" when picking the first app frame.
+    # The first pattern catches gem vendor dirs; the second catches Ruby
+    # stdlib paths like `/ruby/3.4.0/` or `/ruby-3.4.4/`, without
+    # accidentally matching host directories like `clients/ruby/...`
+    # that merely contain the word "ruby".
+    NON_APP_PATH_PATTERNS = [
+      %r{/gems/},
+      %r{/ruby[-/]\d},
+    ].freeze
+
     def initialize(app, sink: nil, config: Beacon.config, logger: nil)
       sink ||= Beacon.client
       @app    = app
@@ -97,8 +114,9 @@ module Beacon
         message:         truncate(exception.message.to_s, 500),
         first_app_frame: frame,
       }
-      if send_full && exception.backtrace
-        properties[:stack_trace] = exception.backtrace.join("\n")
+      if send_full
+        stack = format_stack_trace(exception)
+        properties[:stack_trace] = stack if stack
       end
 
       @sink << {
@@ -145,24 +163,52 @@ module Beacon
       end
     end
 
+    # Walk backtrace_locations (structured, Ruby-version-stable) rather
+    # than string-splitting `backtrace` with `:in `, which silently breaks
+    # across Ruby point releases. Returns the first app frame as
+    # `relative/path.rb:LINENO`, or nil if no frame belongs to the host
+    # app (gem-only stacks, locations missing, etc.).
     def first_app_frame(exception)
-      bt = exception.backtrace
-      return nil unless bt
+      locations = exception.respond_to?(:backtrace_locations) ? exception.backtrace_locations : nil
+      return nil unless locations && !locations.empty?
 
-      root = @app_root
-      root_prefix = root + "/"
-      bt.each do |line|
-        # "/Users/luc/app/app/controllers/x.rb:42:in `index'"
-        idx = line.index(":in ")
-        path_part = idx ? line[0, idx] : line
-        next if path_part.include?("/gems/")
-        next if path_part.include?("/ruby/")
-        next unless path_part.start_with?(root_prefix)
-        rel = path_part[root_prefix.length..]
+      root_prefix = @app_root + "/"
+      locations.each do |loc|
+        path = loc.absolute_path || loc.path
+        next unless path
+        next if NON_APP_PATH_PATTERNS.any? { |p| p.match?(path) }
+        next unless path.start_with?(root_prefix)
+        rel = path[root_prefix.length..]
         next if rel.start_with?("vendor/")
-        return rel
+        return "#{rel}:#{loc.lineno}"
       end
       nil
+    end
+
+    # Build a stack_trace property value that fits under
+    # STACK_TRACE_MAX_BYTES. Keeps as many leading frames as fit and
+    # appends a truncation marker. Uses backtrace_locations when
+    # available so the format is stable across Ruby versions.
+    def format_stack_trace(exception)
+      locations = exception.respond_to?(:backtrace_locations) ? exception.backtrace_locations : nil
+      lines = if locations && !locations.empty?
+        locations.map { |loc| "#{loc.path}:#{loc.lineno}:in `#{loc.base_label}'" }
+      else
+        exception.backtrace
+      end
+      return nil unless lines && !lines.empty?
+
+      budget  = STACK_TRACE_MAX_BYTES - STACK_TRACE_TRUNCATED_SUFFIX.bytesize
+      kept    = []
+      running = 0
+      lines.each do |line|
+        size = line.bytesize + 1  # +1 for the joining "\n"
+        break if running + size > budget
+        kept << line
+        running += size
+      end
+      return lines.join("\n") if kept.length == lines.length  # fit in budget
+      "#{kept.join("\n")}#{STACK_TRACE_TRUNCATED_SUFFIX}"
     end
 
     def realtime_ns
