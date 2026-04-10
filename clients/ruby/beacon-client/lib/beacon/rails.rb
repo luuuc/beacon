@@ -66,6 +66,7 @@ module Beacon
     # the exact template.
     initializer "beacon.subscribe_action_controller", after: :load_config_initializers do |_app|
       next unless defined?(::ActiveSupport::Notifications)
+      Beacon::Railtie.instance_variable_set(:@subscriber_log_throttle, Beacon::LogThrottle.new)
       ::ActiveSupport::Notifications.subscribe("start_processing.action_controller") do |_name, _start, _finish, _id, payload|
         begin
           request = payload[:request]
@@ -74,7 +75,10 @@ module Beacon
           template = Beacon::Railtie.route_template_for(env, payload)
           env["beacon.route_template"] = template if template
         rescue => e
-          warn "[beacon] action_controller subscriber rescued #{e.class}: #{e.message}"
+          Beacon::Railtie.instance_variable_get(:@subscriber_log_throttle).warn(:"subscriber_#{e.class.name}") do |count|
+            suffix = count > 1 ? " (#{count} in the last minute)" : ""
+            "action_controller subscriber rescued #{e.class}: #{e.message}#{suffix}"
+          end
         end
       end
     end

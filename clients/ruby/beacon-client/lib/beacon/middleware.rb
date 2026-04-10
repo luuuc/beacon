@@ -69,6 +69,17 @@ module Beacon
       @stack_seen = Beacon::LRU.new(max: config.cache_size)
     end
 
+    # Public stats surface for tests and Beacon.stats. Returns only
+    # the counters that are load-bearing for cache-bound debugging:
+    # name_cache_size and stack_seen_size. Both are bounded by
+    # Configuration#cache_size.
+    def stats
+      {
+        name_cache_size: @name_cache.size,
+        stack_seen_size: @stack_seen.size,
+      }
+    end
+
     def call(env)
       # Kill-switch fast path: a disabled middleware is a pure passthrough
       # with zero allocations beyond this branch. This is what makes

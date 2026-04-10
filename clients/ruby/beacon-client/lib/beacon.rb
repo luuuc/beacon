@@ -1,6 +1,7 @@
 require "beacon/version"
 require "beacon/configuration"
 require "beacon/fingerprint"
+require "beacon/log_throttle"
 require "beacon/lru"
 require "beacon/path_normalizer"
 require "beacon/queue"
@@ -53,6 +54,29 @@ module Beacon
       client.track(name, properties)
     end
 
+    # Operator-visible introspection. Returns a flat hash describing
+    # the client's current internal state — queue depth, the drop
+    # counter, flusher counters, and transport counters. Used by
+    # smoke tests and rake tasks; also the primary signal operators
+    # have when something gets weird at 3am.
+    def stats
+      c = @client
+      return disabled_stats unless c
+      {
+        queue_depth:          c.queue.length,
+        queue_max:            config.queue_size,
+        dropped:              c.queue.dropped,
+        sent:                 c.flusher&.stats&.[](:sent) || 0,
+        last_flush_at:        c.flusher&.stats&.[](:last_flush_at),
+        last_flush_status:    c.flusher&.stats&.[](:last_flush_status),
+        circuit_open:         c.flusher&.stats&.[](:circuit_open) || false,
+        consecutive_failures: c.flusher&.stats&.[](:consecutive_failures) || 0,
+        reconnects:           c.instance_variable_get(:@transport)&.respond_to?(:reconnects) ?
+                                c.instance_variable_get(:@transport).reconnects : 0,
+        enabled:              c.enabled?,
+      }
+    end
+
     def flush
       client.flush
     end
@@ -65,6 +89,15 @@ module Beacon
     end
 
     private
+
+    def disabled_stats
+      {
+        queue_depth: 0, queue_max: config.queue_size, dropped: 0,
+        sent: 0, last_flush_at: nil, last_flush_status: nil,
+        circuit_open: false, consecutive_failures: 0, reconnects: 0,
+        enabled: false,
+      }
+    end
 
     def warn_if_unusable_endpoint
       return if config.enabled?

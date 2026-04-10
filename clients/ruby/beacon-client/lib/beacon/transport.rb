@@ -47,11 +47,20 @@ module Beacon
       ].freeze
 
       def initialize(config)
-        @config     = config
-        @uri        = URI.parse("#{config.endpoint.to_s.chomp("/")}/events")
-        @mutex      = Mutex.new
-        @http       = nil
-        @user_agent = "beacon-client/#{Beacon::VERSION} (ruby #{RUBY_VERSION})".freeze
+        @config      = config
+        @uri         = URI.parse("#{config.endpoint.to_s.chomp("/")}/events")
+        @mutex       = Mutex.new
+        @http        = nil
+        @user_agent  = "beacon-client/#{Beacon::VERSION} (ruby #{RUBY_VERSION})".freeze
+        @reconnects  = 0
+      end
+
+      # Number of times a dead socket was recovered by the reconnect-once
+      # path. Exposed via Beacon.stats so operators can distinguish
+      # "Beacon P99 spiked because the server was flaky and we healed it"
+      # from "Beacon P99 spiked because of something else."
+      def reconnects
+        @mutex.synchronize { @reconnects }
       end
 
       def post(body, idempotency_key:)
@@ -96,6 +105,7 @@ module Beacon
         begin
           @http.request(yield)
         rescue *RECONNECTABLE_ERRORS
+          @reconnects += 1
           close_connection
           ensure_connected
           @http.request(yield)

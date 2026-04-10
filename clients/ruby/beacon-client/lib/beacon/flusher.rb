@@ -15,16 +15,37 @@ module Beacon
     DRAIN_BATCH             = 1_000
     SHUTDOWN_FLUSH_TIMEOUT  = 2.0
 
-    def initialize(client, transport:, backoff: BACKOFF_SECONDS)
+    def initialize(client, transport:, backoff: BACKOFF_SECONDS, log_throttle: nil)
       @client    = client
       @config    = client.config
       @transport = transport
       @backoff   = backoff
+      @log_throttle = log_throttle || Beacon::LogThrottle.new
 
       @stop                 = false
       @thread               = nil
       @consecutive_failures = 0
       @circuit_open_until   = nil
+
+      # Observability counters — read by Beacon.stats. Events written
+      # under @stats_mutex so concurrent reads (from Beacon.stats on
+      # the main thread) see a consistent snapshot.
+      @stats_mutex       = Mutex.new
+      @sent              = 0
+      @last_flush_at     = nil
+      @last_flush_status = nil
+    end
+
+    def stats
+      @stats_mutex.synchronize do
+        {
+          sent:                 @sent,
+          last_flush_at:        @last_flush_at,
+          last_flush_status:    @last_flush_status,
+          consecutive_failures: @consecutive_failures,
+          circuit_open:         !@circuit_open_until.nil?,
+        }
+      end
     end
 
     def start
@@ -73,16 +94,29 @@ module Beacon
       idempotency_key = SecureRandom.uuid
 
       if post_with_retries(payload, idempotency_key)
+        record_flush(events.length, :ok)
         @consecutive_failures = 0
       else
+        record_flush(0, :failed)
         @consecutive_failures += 1
         if @consecutive_failures >= CIRCUIT_OPEN_THRESHOLD
           @circuit_open_until = monotonic + CIRCUIT_OPEN_SECONDS
-          warn "[beacon] circuit breaker opened — pausing flushes for #{CIRCUIT_OPEN_SECONDS}s"
+          @log_throttle.warn(:circuit_open) do |count|
+            suffix = count > 1 ? " (#{count} times in the last minute)" : ""
+            "circuit breaker opened — pausing flushes for #{CIRCUIT_OPEN_SECONDS}s#{suffix}"
+          end
         end
       end
     rescue => e
       log_rescue(e)
+    end
+
+    def record_flush(sent_count, status)
+      @stats_mutex.synchronize do
+        @sent             += sent_count
+        @last_flush_at     = Time.now.utc
+        @last_flush_status = status
+      end
     end
 
     def post_with_retries(payload, idempotency_key)
@@ -94,7 +128,10 @@ module Beacon
         elsif result.status == 200 || result.status == 202
           return true
         elsif result.status == 400 || result.status == 401 || result.status == 413
-          warn "[beacon] dropping batch — server returned #{result.status}"
+          @log_throttle.warn(:"drop_#{result.status}") do |count|
+            suffix = count > 1 ? " (#{count} in the last minute)" : ""
+            "dropping batch — server returned #{result.status}#{suffix}"
+          end
           return false
         elsif result.status == 429
           sleep(result.retry_after && result.retry_after > 0 ? result.retry_after : 1)
@@ -102,7 +139,10 @@ module Beacon
         elsif result.status >= 500 && result.status < 600
           # retry
         else
-          warn "[beacon] unexpected status #{result.status} — dropping batch"
+          @log_throttle.warn(:"drop_#{result.status}") do |count|
+            suffix = count > 1 ? " (#{count} in the last minute)" : ""
+            "unexpected status #{result.status} — dropping batch#{suffix}"
+          end
           return false
         end
 
@@ -152,7 +192,10 @@ module Beacon
     end
 
     def log_rescue(error)
-      warn "[beacon] flusher rescued #{error.class}: #{error.message}"
+      @log_throttle.warn(:"rescue_#{error.class.name}") do |count|
+        suffix = count > 1 ? " (#{count} in the last minute)" : ""
+        "flusher rescued #{error.class}: #{error.message}#{suffix}"
+      end
     end
   end
 end
