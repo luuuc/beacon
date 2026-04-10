@@ -1,6 +1,8 @@
 require "test_helper"
+require "socket"
 require "beacon"
 require "beacon/test/fake_transport"
+require "beacon/transport"
 
 # This test simulates the Puma-clustered case: the parent boots a Beacon
 # client (with a real flusher thread), then forks a worker, then the worker
@@ -68,6 +70,94 @@ class ForkSafetyTest < Minitest::Test
     assert_equal 1, alive,             "child should have a live flusher thread"
     assert_equal 0, same_thread,       "child flusher must be a NEW thread, not the parent's"
     assert_equal 3, after_pushes,      "child should accept its own pushes"
+  end
+
+  def test_persistent_transport_opens_a_fresh_socket_in_fork_child
+    # Real fork-safety test for Card 4's persistent connection. The
+    # parent warms up a POST (opens a socket), then forks; the child
+    # calls after_fork, posts, and reports the accept_count seen by
+    # the test server. If Transport::Http#after_fork is missing or
+    # misbehaves, parent and child will share the same FD and the
+    # server will see exactly one accept across both; we assert two.
+    server = nil
+    accept_count = nil
+    begin
+      server = TCPServer.new("127.0.0.1", 0)
+      port   = server.addr[1]
+      accept_count_ivar = [0]
+      accept_mutex      = Mutex.new
+      server_thread = Thread.new do
+        loop do
+          socket = server.accept rescue break
+          accept_mutex.synchronize { accept_count_ivar[0] += 1 }
+          # Handle each connection in its own thread so the parent's
+          # keep-alive sitting in gets can't block us from accepting
+          # the child's post-fork connection.
+          Thread.new(socket) do |s|
+            begin
+              loop do
+                line = s.gets
+                break if line.nil?
+                clen = 0
+                while (h = s.gets) && h != "\r\n"
+                  clen = $1.to_i if h =~ /\AContent-Length:\s*(\d+)\r\n\z/i
+                end
+                s.read(clen) if clen > 0
+                s.write("HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+              end
+            rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+              # client gave up
+            ensure
+              s.close rescue nil
+            end
+          end
+        end
+      end
+
+      Beacon.config.endpoint        = "http://127.0.0.1:#{port}"
+      Beacon.config.connect_timeout = 0.5
+      Beacon.config.read_timeout    = 0.5
+      parent_transport = Beacon::Transport::Http.new(Beacon.config)
+      parent_client    = Beacon::Client.new(
+        config: Beacon.config, transport: parent_transport, autostart: false,
+      )
+      # Warm up the parent: first POST opens socket #1.
+      parent_transport.post("{}", idempotency_key: "parent")
+
+      read, write = IO.pipe
+      pid = Process.fork do
+        read.close
+        begin
+          parent_client.after_fork
+          # The Client#after_fork call should have dropped the held
+          # socket. The child's first POST must open a fresh one —
+          # socket #2 from the server's perspective.
+          parent_transport.post("{}", idempotency_key: "child")
+        ensure
+          write.write("done")
+          write.close
+          exit!(0)
+        end
+      end
+      write.close
+      Process.wait(pid)
+      read.read; read.close
+
+      # Drop the parent's keep-alive so the handler thread wakes from
+      # gets and exits, then close the listener so the accept thread
+      # bails out of its loop.
+      parent_transport.after_fork
+      server.close
+      server_thread.join(1)
+      accept_count = accept_mutex.synchronize { accept_count_ivar[0] }
+    ensure
+      server&.close rescue nil
+    end
+
+    assert_operator accept_count, :>=, 2,
+      "expected at least 2 accepts (parent warmup + child post-fork); " \
+      "got #{accept_count}. A value of 1 means the child inherited the " \
+      "parent's socket FD — Transport::Http#after_fork is broken."
   end
 
   def test_lazy_fork_detection_on_push_without_after_fork
