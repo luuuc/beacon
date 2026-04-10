@@ -113,8 +113,7 @@ class MiddlewareTest < Minitest::Test
     10_000.times do |i|
       mw.call(Rack::MockRequest.env_for("/probe/#{i}/leaf", method: "GET"))
     end
-    cache = mw.instance_variable_get(:@name_cache)
-    assert_operator cache.size, :<=, 512
+    assert_operator mw.stats[:name_cache_size], :<=, 512
   end
 
   def test_stack_seen_stays_bounded_under_distinct_fingerprints
@@ -129,9 +128,9 @@ class MiddlewareTest < Minitest::Test
       fingerprint = Beacon::Fingerprint.compute("SomeError#{i}", "app/controllers/x.rb")
       mw.send(:should_send_full_stack?, fingerprint)
     end
-    seen = mw.instance_variable_get(:@stack_seen)
-    assert_operator seen.size, :<=, 256
-    refute_equal 0, seen.size, "sanity check: fingerprints must actually land in the cache"
+    assert_operator mw.stats[:stack_seen_size], :<=, 256
+    refute_equal 0, mw.stats[:stack_seen_size],
+      "sanity check: fingerprints must actually land in the cache"
   end
 
   def test_stack_trace_is_truncated_to_sixteen_kilobytes
@@ -159,6 +158,23 @@ class MiddlewareTest < Minitest::Test
     assert_operator stack.bytesize, :<=, Beacon::Middleware::STACK_TRACE_MAX_BYTES
     assert stack.end_with?("… (truncated)"), "expected truncation marker"
     assert_includes stack, "file0.rb:10:in `method_0'", "must keep leading frames"
+  end
+
+  def test_format_stack_trace_against_real_raise
+    # End-to-end: raise a real exception from this file and assert the
+    # captured stack_trace contains a line from middleware_test.rb with
+    # the expected `:lineno:in `label'` suffix shape. Stubbed
+    # backtrace_locations tests prove the formatter; this proves the
+    # wiring against real Ruby data.
+    Beacon.config.app_root = File.expand_path("..", __dir__)
+    mw  = Beacon::Middleware.new(->(_) { raise RuntimeError, "boom" }, sink: @sink)
+    env = Rack::MockRequest.env_for("/x", method: "GET")
+    assert_raises(RuntimeError) { mw.call(env) }
+    error = @sink.events.find { |e| e[:kind] == :error }
+    stack = error[:properties][:stack_trace]
+    refute_nil stack
+    assert_match(/middleware_test\.rb:\d+:in `/, stack,
+      "expected a stack frame from middleware_test.rb in the real raise path")
   end
 
   def test_first_app_frame_uses_backtrace_locations
@@ -191,7 +207,6 @@ class MiddlewareTest < Minitest::Test
       end
     end
     ts.each(&:join)
-    cache = mw.instance_variable_get(:@name_cache)
-    assert_operator cache.size, :<=, Beacon.config.cache_size
+    assert_operator mw.stats[:name_cache_size], :<=, Beacon.config.cache_size
   end
 end

@@ -131,31 +131,38 @@ module Beacon
     def send_batch(events)
       payload         = JSON.generate(events: events)
       idempotency_key = SecureRandom.uuid
+      ok              = post_with_retries(payload, idempotency_key)
 
-      if post_with_retries(payload, idempotency_key)
-        record_flush(events.length, :ok)
-        @consecutive_failures = 0
-      else
-        record_flush(0, :failed)
-        @consecutive_failures += 1
-        if @consecutive_failures >= CIRCUIT_OPEN_THRESHOLD
-          @circuit_open_until = monotonic + CIRCUIT_OPEN_SECONDS
-          @log_throttle.warn(:circuit_open) do |count|
-            suffix = count > 1 ? " (#{count} times in the last minute)" : ""
-            "circuit breaker opened — pausing flushes for #{CIRCUIT_OPEN_SECONDS}s#{suffix}"
+      # All counter writes go through @stats_mutex so the Beacon.stats
+      # reader on the main thread sees a consistent snapshot under
+      # non-MRI Rubies. MRI's GVL would make unlocked writes "work" by
+      # accident; TruffleRuby / JRuby would race.
+      opened_circuit = false
+      @stats_mutex.synchronize do
+        if ok
+          @sent                 += events.length
+          @last_flush_at         = Time.now.utc
+          @last_flush_status     = :ok
+          @consecutive_failures  = 0
+        else
+          @last_flush_at         = Time.now.utc
+          @last_flush_status     = :failed
+          @consecutive_failures += 1
+          if @consecutive_failures >= CIRCUIT_OPEN_THRESHOLD && @circuit_open_until.nil?
+            @circuit_open_until = monotonic + CIRCUIT_OPEN_SECONDS
+            opened_circuit = true
           end
+        end
+      end
+
+      if opened_circuit
+        @log_throttle.warn(:circuit_open) do |count|
+          suffix = count > 1 ? " (#{count} times in the last minute)" : ""
+          "circuit breaker opened — pausing flushes for #{CIRCUIT_OPEN_SECONDS}s#{suffix}"
         end
       end
     rescue => e
       log_rescue(e)
-    end
-
-    def record_flush(sent_count, status)
-      @stats_mutex.synchronize do
-        @sent             += sent_count
-        @last_flush_at     = Time.now.utc
-        @last_flush_status = status
-      end
     end
 
     def post_with_retries(payload, idempotency_key)
@@ -213,13 +220,15 @@ module Beacon
     end
 
     def circuit_open?
-      return false unless @circuit_open_until
-      if monotonic >= @circuit_open_until
-        @circuit_open_until   = nil
-        @consecutive_failures = 0
-        return false
+      @stats_mutex.synchronize do
+        return false unless @circuit_open_until
+        if monotonic >= @circuit_open_until
+          @circuit_open_until   = nil
+          @consecutive_failures = 0
+          return false
+        end
+        true
       end
-      true
     end
 
     def monotonic

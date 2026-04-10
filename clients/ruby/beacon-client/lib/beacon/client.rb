@@ -57,6 +57,14 @@ module Beacon
       @enabled
     end
 
+    # Reconnect counter passthrough for Beacon.stats. Returns 0 when
+    # no transport is held (disabled client) or when the transport
+    # doesn't implement the counter (test doubles).
+    def transport_reconnects
+      return 0 unless @transport && @transport.respond_to?(:reconnects)
+      @transport.reconnects
+    end
+
     def flush
       @flusher&.flush_now
     end

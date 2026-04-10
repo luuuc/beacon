@@ -34,10 +34,15 @@ module Beacon
     # Thread-safe lazy singleton. Two Puma threads racing on the first
     # request used to be able to create two Clients (each with its own
     # flusher thread) — the second one leaked forever. The Mutex
-    # serializes first-access; the double-checked idiom keeps the happy
-    # path Mutex-free after initialization.
+    # serializes every access.
+    #
+    # Why not a double-checked-locking fast path? Under MRI's GVL it
+    # would be safe; under TruffleRuby / JRuby it isn't — a reader
+    # could observe @client as non-nil while the Client's own fields
+    # are still half-written (no memory barrier on the unsynchronized
+    # read). Taking the Mutex every call costs ~100ns on MRI, and
+    # Beacon.client is called per-Client-lifetime, not per-request.
     def client
-      return @client if @client
       CLIENT_MUTEX.synchronize do
         @client ||= Client.new(config: config)
       end
@@ -59,23 +64,32 @@ module Beacon
     # counter, flusher counters, and transport counters. Used by
     # smoke tests and rake tasks; also the primary signal operators
     # have when something gets weird at 3am.
+    #
+    # Flusher stats are fetched ONCE into a local so the result hash
+    # is a consistent snapshot — without this, a flush happening
+    # mid-build could leave `sent` and `last_flush_at` disagreeing.
     def stats
       c = @client
       return disabled_stats unless c
+      fstats = c.flusher&.stats || EMPTY_FLUSHER_STATS
       {
         queue_depth:          c.queue.length,
         queue_max:            config.queue_size,
         dropped:              c.queue.dropped,
-        sent:                 c.flusher&.stats&.[](:sent) || 0,
-        last_flush_at:        c.flusher&.stats&.[](:last_flush_at),
-        last_flush_status:    c.flusher&.stats&.[](:last_flush_status),
-        circuit_open:         c.flusher&.stats&.[](:circuit_open) || false,
-        consecutive_failures: c.flusher&.stats&.[](:consecutive_failures) || 0,
-        reconnects:           c.instance_variable_get(:@transport)&.respond_to?(:reconnects) ?
-                                c.instance_variable_get(:@transport).reconnects : 0,
+        sent:                 fstats[:sent] || 0,
+        last_flush_at:        fstats[:last_flush_at],
+        last_flush_status:    fstats[:last_flush_status],
+        circuit_open:         fstats[:circuit_open] || false,
+        consecutive_failures: fstats[:consecutive_failures] || 0,
+        reconnects:           c.transport_reconnects,
         enabled:              c.enabled?,
       }
     end
+
+    EMPTY_FLUSHER_STATS = {
+      sent: 0, last_flush_at: nil, last_flush_status: nil,
+      circuit_open: false, consecutive_failures: 0,
+    }.freeze
 
     def flush
       client.flush

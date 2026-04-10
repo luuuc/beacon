@@ -60,23 +60,33 @@ class LogThrottleTest < Minitest::Test
     assert_match(/second \(1\)/, out)
   end
 
-  def test_thread_safe_under_contention
-    threads = Array.new(16) do
-      Thread.new { 100.times { @throttle.warn(:k) { |_| "x" } } }
+  def test_thread_safe_under_contention_preserves_exact_counts
+    # 16 threads × 100 warn calls = 1600 total invocations against a
+    # key with no prior state. With the clock frozen at t=0, exactly
+    # ONE emission should fire (the very first caller to enter the
+    # Mutex) and 1599 should be suppressed. Crucially, the suppressed
+    # counter must be exactly 1599 — if the Mutex were dropped,
+    # concurrent increments would lose writes and land below 1599.
+    capture_stderr do
+      threads = Array.new(16) do
+        Thread.new { 100.times { @throttle.warn(:k) { |_| "x" } } }
+      end
+      threads.each(&:join)
     end
-    threads.each(&:join)
-    # If we're still here without an exception, we're OK. We can also
-    # spot-check that exactly one emission happened (all within the
-    # 0-second window).
+    state = @throttle.instance_variable_get(:@state)[:k]
+    assert_equal 1599, state[:suppressed],
+      "expected exactly 1599 suppressed calls under 16x100 contention, got #{state[:suppressed]}"
+
+    # Advance the clock past the interval; the next emission should
+    # report count=1600 (1599 suppressed + this one) and reset the
+    # suppressed counter to 0.
     @clock_now = 100.0
-    emitted = capture_stderr do
-      @throttle.warn(:k) { |count| "eventual (#{count})" }
+    msg = nil
+    capture_stderr do
+      msg = @throttle.warn(:k) { |count| "fire (#{count})" }
     end
-    # The second-window count should be 1 (this emission itself —
-    # suppressed prior ones were 1599 but they were NOT suppressed
-    # from the `:last_at` perspective because the first caller set
-    # it).
-    assert_match(/eventual/, emitted)
+    assert_equal "fire (1600)", msg
+    assert_equal 0, @throttle.instance_variable_get(:@state)[:k][:suppressed]
   end
 
   private

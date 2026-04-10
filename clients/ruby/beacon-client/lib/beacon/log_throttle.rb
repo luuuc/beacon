@@ -17,6 +17,13 @@ module Beacon
   # seeing 12 separate lines.
   #
   # Thread-safe via a single Mutex.
+  #
+  # **Keys must be low-cardinality** — the internal state map is not
+  # bounded. Use constant symbols (`:circuit_open`, `:drop_500`) or
+  # symbols keyed by a fixed set (error class names). Do NOT key on
+  # per-request values like URLs, user IDs, or unbounded strings; the
+  # state map would grow indefinitely and you'd re-create the Card 3
+  # `@name_cache` bug in a different shape.
   class LogThrottle
     def initialize(interval: 60.0, clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
       @interval = interval

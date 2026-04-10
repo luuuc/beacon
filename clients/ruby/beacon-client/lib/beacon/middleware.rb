@@ -203,29 +203,44 @@ module Beacon
     end
 
     # Build a stack_trace property value that fits under
-    # STACK_TRACE_MAX_BYTES. Keeps as many leading frames as fit and
-    # appends a truncation marker. Uses backtrace_locations when
-    # available so the format is stable across Ruby versions.
+    # STACK_TRACE_MAX_BYTES. Iterates lazily, building each frame's
+    # string only when it might still fit, and stops at the budget.
+    # This avoids the 500-allocations-to-keep-30 wastage a
+    # .map-then-truncate pattern would produce on deep stacks.
+    #
+    # Uses backtrace_locations when available so the format is stable
+    # across Ruby versions. Falls back to exception.backtrace strings
+    # otherwise (exotic hosts, rspec mocking, etc.).
     def format_stack_trace(exception)
       locations = exception.respond_to?(:backtrace_locations) ? exception.backtrace_locations : nil
-      lines = if locations && !locations.empty?
-        locations.map { |loc| "#{loc.path}:#{loc.lineno}:in `#{loc.base_label}'" }
-      else
-        exception.backtrace
-      end
-      return nil unless lines && !lines.empty?
+      budget    = STACK_TRACE_MAX_BYTES - STACK_TRACE_TRUNCATED_SUFFIX.bytesize
+      kept      = []
+      running   = 0
+      truncated = false
 
-      budget  = STACK_TRACE_MAX_BYTES - STACK_TRACE_TRUNCATED_SUFFIX.bytesize
-      kept    = []
-      running = 0
-      lines.each do |line|
-        size = line.bytesize + 1  # +1 for the joining "\n"
-        break if running + size > budget
+      each_frame_line(locations, exception.backtrace) do |line|
+        size = line.bytesize + 1  # +1 for joining "\n"
+        if running + size > budget
+          truncated = true
+          break
+        end
         kept << line
         running += size
       end
-      return lines.join("\n") if kept.length == lines.length  # fit in budget
+
+      return nil if kept.empty? && !truncated
+      return kept.join("\n") unless truncated
       "#{kept.join("\n")}#{STACK_TRACE_TRUNCATED_SUFFIX}"
+    end
+
+    def each_frame_line(locations, backtrace)
+      if locations && !locations.empty?
+        locations.each do |loc|
+          yield "#{loc.path}:#{loc.lineno}:in `#{loc.base_label}'"
+        end
+      elsif backtrace
+        backtrace.each { |line| yield line }
+      end
     end
 
     def realtime_ns

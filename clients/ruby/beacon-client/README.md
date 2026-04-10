@@ -42,6 +42,35 @@ require "beacon/middleware"
 use Beacon::Middleware
 ```
 
+### Kill switch
+
+To silence Beacon entirely without removing the gem:
+
+```ruby
+# config/initializers/beacon.rb
+Beacon.configure { |c| c.enabled = false }
+```
+
+Or at the operating-system level:
+
+```bash
+BEACON_DISABLED=1 bin/rails server
+```
+
+A disabled Beacon is a pure passthrough: the middleware adds one
+boolean check per request, nothing is captured, no flusher thread
+is started, no network connection is opened.
+
+**`BEACON_DISABLED` is read once at process start.** Setting it after
+the Ruby process has already booted has no effect — you must restart
+the worker. Accepted truthy values: `1`, `true`, `yes`, `on`
+(case-insensitive). Everything else (including `0`, `false`, `no`,
+`off`, and the empty string) leaves Beacon enabled.
+
+If `c.endpoint` is nil or unparseable, Beacon prints one boot warning
+to stderr and then behaves the same as `c.enabled = false` — no crash,
+no spam, no network traffic.
+
 ### A note on the fork hook
 
 Because the Railtie prepends `Process._fork`, Beacon's `after_fork` runs in

@@ -75,10 +75,11 @@ class QueueTest < Minitest::Test
   end
 
   def test_burst_from_many_threads_triggers_size_based_flush
-    # 10,000 events from 16 threads against flush_threshold=100. The
-    # flusher-side (wait_and_drain) should wake early at least once
-    # per 100 events and drain what's there. This is a stress test for
-    # the condvar signaling, not an exact-count assertion.
+    # 10,000 events from 16 threads against flush_threshold=100 must be
+    # drained via size-triggered condvar wakes, NOT by the timeout floor.
+    # We set the timeout to 10 seconds so the test can only pass if the
+    # condvar path actually fires; a broken signal would make the test
+    # hit the timeout ceiling 10,000 / 1000 = 10 times (100+ seconds).
     q = Beacon::Queue.new(max: 20_000, flush_threshold: 100)
     drained = []
     drain_mutex = Mutex.new
@@ -86,13 +87,14 @@ class QueueTest < Minitest::Test
     consumer = Thread.new do
       total = 0
       loop do
-        events = q.wait_and_drain(1_000, 0.1)
+        events = q.wait_and_drain(1_000, 10.0)
         drain_mutex.synchronize { drained.concat(events) }
         total += events.length
         break if total >= 10_000
       end
     end
 
+    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     producers = Array.new(16) do |t|
       Thread.new do
         625.times { |i| q.push({ t: t, i: i }) }
@@ -100,9 +102,14 @@ class QueueTest < Minitest::Test
     end
     producers.each(&:join)
     consumer.join(5)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
 
     assert_equal 10_000, drained.length,
       "consumer should have drained every event across multiple size-triggered wakes"
+    assert_operator elapsed, :<, 1.0,
+      "drainage should be size-triggered (sub-second); " \
+      "took #{elapsed}s which suggests the condvar wake didn't fire and " \
+      "the 10s timeout floor carried the test"
   end
 
   def test_signal_all_wakes_waiter
