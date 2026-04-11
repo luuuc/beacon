@@ -31,7 +31,7 @@ jobs:
           bundler-cache: false
 
       - name: Install minimal deps
-        run: gem install minitest -v "~> 5.20" rack --no-document
+        run: gem install 'minitest:~> 5.20' rack --no-document
 
       - name: Run unit tests
         run: rake test
