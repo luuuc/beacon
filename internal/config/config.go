@@ -143,6 +143,12 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("BEACON_DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
 	}
+	if v := os.Getenv("BEACON_DATABASE_ADAPTER"); v != "" {
+		cfg.Database.Adapter = v
+	}
+	if v := os.Getenv("BEACON_DATABASE_PATH"); v != "" {
+		cfg.Database.Path = v
+	}
 	if v := os.Getenv("BEACON_DATABASE_SCHEMA"); v != "" {
 		cfg.Database.Schema = v
 	}

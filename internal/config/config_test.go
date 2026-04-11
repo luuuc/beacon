@@ -158,6 +158,60 @@ func TestValidatePprofLoopbackOnly(t *testing.T) {
 	}
 }
 
+// TestEnvDatabaseURLOverridesYAMLAdapter pins the v0.2.1 fix for the
+// bug that shipped Beacon running embedded SQLite on Maket's staging
+// deploy. A YAML file sets `adapter: sqlite` (the historical baked
+// default inside the Docker image), env sets BEACON_DATABASE_URL to a
+// postgres URL — the postgres URL must win so the deployed accessory
+// actually uses the intended database. Without this, the user sees
+// /readyz=ok while Beacon silently writes to a SQLite file nobody
+// queries.
+func TestEnvDatabaseURLOverridesYAMLAdapter(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "beacon.yml")
+	if err := os.WriteFile(path, []byte(`
+database:
+  adapter: sqlite
+  path: /var/lib/beacon/beacon.db
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEACON_DATABASE_URL", "postgres://maket:pw@maket-db:5432/beacon_staging")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.URL != "postgres://maket:pw@maket-db:5432/beacon_staging" {
+		t.Errorf("URL = %q, want postgres URL from env", cfg.Database.URL)
+	}
+	// Adapter field stays as the YAML value — resolveKind's URL-first
+	// precedence is the code path that handles the tie-break, not a
+	// config-time mutation. Exercise ResolveKind indirectly via
+	// adapterfactory to confirm the full chain.
+	if cfg.Database.Adapter != "sqlite" {
+		t.Errorf("Adapter = %q, want sqlite (from YAML)", cfg.Database.Adapter)
+	}
+}
+
+func TestEnvDatabaseAdapterAndPathMapping(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_DATABASE_ADAPTER", "sqlite")
+	t.Setenv("BEACON_DATABASE_PATH", "/var/lib/beacon/beacon.db")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.Adapter != "sqlite" {
+		t.Errorf("Adapter = %q, want sqlite", cfg.Database.Adapter)
+	}
+	if cfg.Database.Path != "/var/lib/beacon/beacon.db" {
+		t.Errorf("Path = %q, want /var/lib/beacon/beacon.db", cfg.Database.Path)
+	}
+}
+
 func TestLoadBadYAML(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()
@@ -175,7 +229,10 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"BEACON_BIND", "BEACON_HTTP_PORT", "BEACON_MCP_PORT",
 		"BEACON_AUTH_TOKEN", "BEACON_PPROF_ENABLED",
-		"BEACON_DATABASE_URL", "BEACON_DATABASE_SCHEMA",
+		"BEACON_DATABASE_URL", "BEACON_DATABASE_ADAPTER",
+		"BEACON_DATABASE_PATH", "BEACON_DATABASE_SCHEMA",
+		"BEACON_DATABASE_MAX_CONNS",
+		"BEACON_INGEST_TRUST_XFF", "BEACON_INGEST_IDEMP_MAX_ENTRIES",
 	} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)

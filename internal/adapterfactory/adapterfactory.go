@@ -42,6 +42,19 @@ func ResolveKind(cfg config.DatabaseConfig) (string, error) {
 }
 
 func resolveKind(cfg config.DatabaseConfig) (string, error) {
+	// A URL with a recognized scheme takes precedence over the Adapter
+	// field. Rationale: env vars typically set URL, YAML files typically
+	// set Adapter, and env must win over YAML so that `BEACON_DATABASE_URL
+	// =postgres://...` overrides a stale `adapter: sqlite` baked into a
+	// default config file. Adapters whose URL format does not self-
+	// identify (MySQL's native DSN, SQLite's plain path) still require
+	// an explicit Adapter field and fall through below.
+	if cfg.URL != "" {
+		switch {
+		case strings.HasPrefix(cfg.URL, "postgres://"), strings.HasPrefix(cfg.URL, "postgresql://"):
+			return "postgres", nil
+		}
+	}
 	if a := strings.ToLower(strings.TrimSpace(cfg.Adapter)); a != "" {
 		switch a {
 		case "postgres", "postgresql":
@@ -54,13 +67,8 @@ func resolveKind(cfg config.DatabaseConfig) (string, error) {
 			return "", fmt.Errorf("adapterfactory: unknown database.adapter %q", cfg.Adapter)
 		}
 	}
-	if cfg.URL != "" {
-		switch {
-		case strings.HasPrefix(cfg.URL, "postgres://"), strings.HasPrefix(cfg.URL, "postgresql://"):
-			return "postgres", nil
-		case strings.HasPrefix(cfg.URL, "mysql://"):
-			return "", errors.New("adapterfactory: set database.adapter: mysql explicitly — go-sql-driver uses a native DSN, not a mysql:// URL")
-		}
+	if cfg.URL != "" && strings.HasPrefix(cfg.URL, "mysql://") {
+		return "", errors.New("adapterfactory: set database.adapter: mysql explicitly — go-sql-driver uses a native DSN, not a mysql:// URL")
 	}
 	if cfg.Path != "" {
 		return "sqlite", nil

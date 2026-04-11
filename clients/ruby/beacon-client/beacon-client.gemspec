@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = "beacon-client"
-  s.version     = "0.2.0"
+  s.version     = "0.2.1"
   s.summary     = "Ruby client for Beacon — the small observability accessory"
   s.description = "Captures perf, errors, and outcomes from a Rack/Rails app and ships them to a Beacon server."
   s.authors     = ["Luc B. Perussault-Diallo"]

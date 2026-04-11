@@ -26,6 +26,21 @@ func TestResolveKind(t *testing.T) {
 		{"mysql url needs explicit adapter", config.DatabaseConfig{URL: "mysql://root@tcp(h)/db"}, "", "set database.adapter: mysql explicitly"},
 		{"infer sqlite from path", config.DatabaseConfig{Path: "/var/lib/beacon/x.db"}, "sqlite", ""},
 		{"empty cfg errors", config.DatabaseConfig{}, "", "database config is empty"},
+
+		// v0.2.1 regression: env-set URL must win over a YAML-set
+		// Adapter so `BEACON_DATABASE_URL=postgres://...` can override
+		// a default `adapter: sqlite` baked into a config file. This
+		// is the bug that shipped Beacon running embedded SQLite on
+		// Maket's staging deploy despite a correct postgres URL in
+		// the accessory's env.
+		{"env postgres url wins over yaml sqlite adapter",
+			config.DatabaseConfig{Adapter: "sqlite", URL: "postgres://host/db"}, "postgres", ""},
+		{"env postgresql url wins over yaml sqlite adapter",
+			config.DatabaseConfig{Adapter: "sqlite3", URL: "postgresql://host/db"}, "postgres", ""},
+		{"yaml mysql adapter still honored when url is mysql dsn",
+			config.DatabaseConfig{Adapter: "mysql", URL: "user:pass@tcp(h:3306)/db"}, "mysql", ""},
+		{"yaml postgres adapter unchanged when url is also postgres",
+			config.DatabaseConfig{Adapter: "postgres", URL: "postgres://host/db"}, "postgres", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

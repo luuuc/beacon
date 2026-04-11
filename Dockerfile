@@ -11,10 +11,13 @@
 #   docker build -t beacon:dev .
 #   docker build -t beacon:dev --build-arg VERSION=v0.1.0 .
 #
-# Run (SQLite, zero-config):
+# Run (SQLite — explicit env, no baked config):
 #   docker run --rm \
 #     -p 127.0.0.1:4680:4680 \
 #     -e BEACON_AUTH_TOKEN=$(openssl rand -hex 32) \
+#     -e BEACON_BIND=0.0.0.0 \
+#     -e BEACON_DATABASE_ADAPTER=sqlite \
+#     -e BEACON_DATABASE_PATH=/var/lib/beacon/beacon.db \
 #     -v beacon_data:/var/lib/beacon \
 #     ghcr.io/luuuc/beacon:latest
 #
@@ -22,9 +25,15 @@
 #   docker run --rm \
 #     -p 127.0.0.1:4680:4680 \
 #     -e BEACON_AUTH_TOKEN=$(openssl rand -hex 32) \
+#     -e BEACON_BIND=0.0.0.0 \
 #     -e BEACON_DATABASE_URL=postgres://user:pass@host:5432/beacon \
-#     -e BEACON_DATABASE_SCHEMA=beacon \
 #     ghcr.io/luuuc/beacon:latest
+#
+# NOTE: v0.2.1 removed the "baked SQLite default" config file that used
+# to ship at /etc/beacon/beacon.yml. That file silently beat env vars in
+# real deployments — the staging accessory would run SQLite despite a
+# correct BEACON_DATABASE_URL — so it was deleted. Pass env vars
+# explicitly; there's no implicit default.
 
 # ----------------------------------------------------------------------------
 # Stage 1 — builder
@@ -72,16 +81,10 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 10001 -S beacon && \
     adduser  -u 10001 -S -G beacon -h /var/lib/beacon beacon && \
-    mkdir -p /var/lib/beacon /etc/beacon && \
-    chown -R beacon:beacon /var/lib/beacon /etc/beacon
+    mkdir -p /var/lib/beacon && \
+    chown -R beacon:beacon /var/lib/beacon
 
 COPY --from=builder /out/beacon /usr/local/bin/beacon
-
-# Default config: binds 0.0.0.0 so `docker run -p` works, SQLite on the
-# mounted volume, sensible retention. The user MUST still set
-# BEACON_AUTH_TOKEN — Validate() refuses non-loopback bind without it,
-# which is the intended fail-loud-at-boot behavior.
-COPY docker/beacon.default.yml /etc/beacon/beacon.yml
 
 VOLUME ["/var/lib/beacon"]
 
@@ -95,7 +98,12 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q --spider http://127.0.0.1:4680/healthz || exit 1
 
 ENTRYPOINT ["/usr/local/bin/beacon"]
-CMD ["serve", "--config", "/etc/beacon/beacon.yml"]
+# Boots on env vars alone. No --config, no baked YAML file — v0.2.0
+# had a /etc/beacon/beacon.yml with `adapter: sqlite` that silently
+# beat BEACON_DATABASE_URL from env in real deployments. The user sets
+# BEACON_DATABASE_URL (postgres) or BEACON_DATABASE_ADAPTER=sqlite +
+# BEACON_DATABASE_PATH (sqlite) explicitly. No implicit default.
+CMD ["serve"]
 
 # ----------------------------------------------------------------------------
 # OCI labels — source of truth is the build args / workflow.
