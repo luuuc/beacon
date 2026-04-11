@@ -78,6 +78,54 @@ class FlusherTest < Minitest::Test
     assert_operator @flusher.instance_variable_get(:@consecutive_failures), :>=, 5
   end
 
+  def test_server_429_does_not_open_circuit_breaker
+    # Contract: 429 is a pace signal, not a failure. The client sleeps the
+    # Retry-After window and tries the SAME batch again — it must not count
+    # 429s toward the consecutive-failure tally that opens the circuit.
+    # Pinned here so a future refactor that "simplifies" 429 into the
+    # generic 5xx retry branch can't silently turn rate-limit pressure into
+    # a 30-second blackout.
+    @client.track("paced")
+    # Plan four 429s in a row then a success. With the default zero-second
+    # backoff stub, this completes in milliseconds.
+    4.times { @transport.respond_with(status: 429, retry_after: 0.001) }
+    @transport.respond_with(status: 202)
+
+    silence_warnings { @flusher.flush_now }
+
+    assert_equal 0, @flusher.instance_variable_get(:@consecutive_failures),
+      "429 responses must not count toward consecutive_failures"
+    assert_nil @flusher.instance_variable_get(:@circuit_open_until),
+      "circuit breaker must remain closed after a run of 429s"
+  end
+
+  def test_five_consecutive_5xx_batches_open_circuit_then_reset
+    # Contract test for the full 5xx → circuit-open cycle. We send five
+    # distinct batches, each exhausting its own 5-step retry budget with
+    # 503s, and assert the circuit opens exactly at the fifth consecutive
+    # failed BATCH (not the fifth retry of the first batch).
+    5.times do |i|
+      @client.track("boom#{i}")
+      # Queue exactly one 503 per backoff slot — ZERO_BACKOFF has 5 —
+      # so the fake transport has no leftover scripted responses when
+      # the recovery batch runs below.
+      5.times { @transport.respond_with(status: 503) }
+      silence_warnings { @flusher.flush_now }
+    end
+
+    assert_equal 5, @flusher.instance_variable_get(:@consecutive_failures)
+    assert @flusher.instance_variable_get(:@circuit_open_until),
+      "circuit should be open after 5 consecutive failed batches"
+
+    # With the circuit open, the flusher's run_loop would short-circuit —
+    # but flush_now bypasses the circuit check so the next successful
+    # batch still resets the counter, which is the recovery path.
+    @client.track("recovered")
+    @transport.respond_with(status: 202)
+    @flusher.flush_now
+    assert_equal 0, @flusher.instance_variable_get(:@consecutive_failures)
+  end
+
   def test_circuit_resets_after_successful_batch
     @client.track("first")
     6.times { @transport.respond_with(status: 503) }
