@@ -35,6 +35,18 @@ module FakeRails
       def config
         @config ||= FakeConfig.new
       end
+
+      # Stub for Rails::Railtie#rake_tasks. Real Rails calls the
+      # block when `rake` discovers tasks; our shim just stores the
+      # block so the Railtie can be loaded under the fake. Coverage
+      # for actual rake-task loading lives in spec/rake_tasks_test.rb.
+      def rake_tasks(&block)
+        (@rake_task_blocks ||= []) << block if block
+      end
+
+      def rake_task_blocks
+        @rake_task_blocks ||= []
+      end
     end
 
     class FakeConfig

@@ -103,6 +103,14 @@ module Beacon
       Process.singleton_class.prepend(ForkHook)
     end
 
+    # Auto-load shipped rake tasks into the host app. Rails runs this
+    # block when the `rake` CLI discovers tasks (so `rails -T beacon`
+    # in a host app lists `beacon:deploy_shipped` without any setup).
+    # Path is relative to this file: lib/beacon/rails.rb → lib/tasks/.
+    rake_tasks do
+      load File.expand_path("../tasks/beacon.rake", __dir__)
+    end
+
     ROUTE_FORMAT_SUFFIX = "(.:format)".freeze
 
     # Extract "<METHOD> <path-template>" from a start_processing payload.
