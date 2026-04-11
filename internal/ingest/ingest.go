@@ -35,6 +35,10 @@ type Config struct {
 	MaxBodyBytes      int64
 	RatePerSecond     float64
 	IdempotencyTTL    time.Duration
+	// IdempMaxEntries bounds the in-memory idempotency map. A runaway
+	// client sending unique Idempotency-Key values otherwise grows the
+	// map until the next sweep. Zero falls back to the store's default.
+	IdempMaxEntries int
 	// TrustXFF controls whether X-Forwarded-For is read when deriving the
 	// per-IP rate-limiter key. Default false: a forged header could
 	// otherwise move a caller to an unbucketed slot. Enable only behind a
@@ -74,12 +78,16 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 	if log == nil {
 		log = slog.Default()
 	}
+	idemp := newIdempStore(cfg.IdempotencyTTL)
+	if cfg.IdempMaxEntries > 0 {
+		idemp.maxEntries = cfg.IdempMaxEntries
+	}
 	return &Handler{
 		cfg:     cfg,
 		adapter: adapter,
 		log:     log,
 		rl:      newRateLimiter(cfg.RatePerSecond, cfg.RatePerSecond),
-		idemp:   newIdempStore(cfg.IdempotencyTTL),
+		idemp:   idemp,
 		now:     time.Now,
 	}
 }

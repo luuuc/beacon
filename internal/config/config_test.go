@@ -125,6 +125,39 @@ func TestValidateLoopbackGuard(t *testing.T) {
 	}
 }
 
+func TestValidatePprofLoopbackOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		bind    string
+		token   string
+		pprof   bool
+		wantErr bool
+	}{
+		{"pprof on loopback ok", "127.0.0.1", "", true, false},
+		{"pprof off on public ok", "10.0.0.5", "s", false, false},
+		{"pprof on public with token rejected", "10.0.0.5", "s", true, true},
+		{"pprof on 0.0.0.0 with token rejected", "0.0.0.0", "s", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Server.Bind = tc.bind
+			cfg.Server.Auth.Token = tc.token
+			cfg.Server.PprofEnabled = tc.pprof
+			err := cfg.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr && err != nil && !strings.Contains(err.Error(), "pprof") {
+				t.Errorf("error missing pprof hint: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadBadYAML(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()

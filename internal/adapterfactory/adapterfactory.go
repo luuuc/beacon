@@ -25,7 +25,7 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (beacondb.Adapter, err
 	}
 	switch kind {
 	case "postgres":
-		return pgadapter.Open(ctx, pgadapter.Config{URL: cfg.URL, Schema: cfg.Schema})
+		return pgadapter.Open(ctx, pgadapter.Config{URL: cfg.URL, Schema: cfg.Schema, MaxConns: cfg.MaxConns})
 	case "mysql":
 		return mysqladapter.Open(ctx, mysqladapter.Config{DSN: cfg.URL})
 	case "sqlite":

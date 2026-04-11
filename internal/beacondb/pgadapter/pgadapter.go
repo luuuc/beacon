@@ -23,8 +23,9 @@ import (
 
 // Config is the subset of beacon config that pgadapter actually consumes.
 type Config struct {
-	URL    string // postgres:// DSN
-	Schema string // optional; created if missing, used as search_path
+	URL      string // postgres:// DSN
+	Schema   string // optional; created if missing, used as search_path
+	MaxConns int    // pgx pool cap; 0 leaves pgx's default (derived from the DSN or 4).
 }
 
 type Adapter struct {
@@ -42,6 +43,10 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("pgadapter: parse URL: %w", err)
+	}
+
+	if cfg.MaxConns > 0 {
+		poolCfg.MaxConns = int32(cfg.MaxConns)
 	}
 
 	if cfg.Schema != "" {

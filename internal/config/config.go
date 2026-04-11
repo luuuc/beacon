@@ -25,6 +25,10 @@ type IngestConfig struct {
 	// limiter. Set true only when the proxy rewrites XFF and your network
 	// prevents direct reach to :4680.
 	TrustXFF bool `yaml:"trust_xff"`
+
+	// IdempMaxEntries bounds the in-memory idempotency ring. Zero lets
+	// the handler pick its default (100k). Raise only when you know why.
+	IdempMaxEntries int `yaml:"idemp_max_entries"`
 }
 
 type ServerConfig struct {
@@ -40,10 +44,11 @@ type AuthConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL     string `yaml:"url"`
-	Adapter string `yaml:"adapter"`
-	Path    string `yaml:"path"`
-	Schema  string `yaml:"schema"`
+	URL      string `yaml:"url"`
+	Adapter  string `yaml:"adapter"`
+	Path     string `yaml:"path"`
+	Schema   string `yaml:"schema"`
+	MaxConns int    `yaml:"max_conns"` // pgx pool cap; 0 = pgx default. Postgres only.
 }
 
 type RetentionConfig struct {
@@ -141,12 +146,26 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("BEACON_DATABASE_SCHEMA"); v != "" {
 		cfg.Database.Schema = v
 	}
+	if v := os.Getenv("BEACON_DATABASE_MAX_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("BEACON_DATABASE_MAX_CONNS: %w", err)
+		}
+		cfg.Database.MaxConns = n
+	}
 	if v := os.Getenv("BEACON_INGEST_TRUST_XFF"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			return fmt.Errorf("BEACON_INGEST_TRUST_XFF: %w", err)
 		}
 		cfg.Ingest.TrustXFF = b
+	}
+	if v := os.Getenv("BEACON_INGEST_IDEMP_MAX_ENTRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("BEACON_INGEST_IDEMP_MAX_ENTRIES: %w", err)
+		}
+		cfg.Ingest.IdempMaxEntries = n
 	}
 	return nil
 }
@@ -181,6 +200,9 @@ func mergeNonZero(dst, src *Config) {
 	if src.Database.Schema != "" {
 		dst.Database.Schema = src.Database.Schema
 	}
+	if src.Database.MaxConns != 0 {
+		dst.Database.MaxConns = src.Database.MaxConns
+	}
 	if src.Retention.EventsDays != 0 {
 		dst.Retention.EventsDays = src.Retention.EventsDays
 	}
@@ -201,6 +223,9 @@ func mergeNonZero(dst, src *Config) {
 	}
 	if src.Ingest.TrustXFF {
 		dst.Ingest.TrustXFF = true
+	}
+	if src.Ingest.IdempMaxEntries != 0 {
+		dst.Ingest.IdempMaxEntries = src.Ingest.IdempMaxEntries
 	}
 }
 
@@ -226,6 +251,27 @@ func (c *Config) Validate() error {
 		return fmt.Errorf(
 			"refusing to bind non-loopback interface %q with no auth.token set: "+
 				"Beacon has no built-in auth; set server.auth.token or bind to 127.0.0.1",
+			c.Server.Bind,
+		)
+	}
+	if c.Database.MaxConns < 0 || c.Database.MaxConns > 200 {
+		return fmt.Errorf(
+			"database.max_conns out of range: %d (expected 0 for pgx default, or 1..200)",
+			c.Database.MaxConns,
+		)
+	}
+	if c.Ingest.IdempMaxEntries < 0 {
+		return fmt.Errorf("ingest.idemp_max_entries must be ≥ 0 (got %d)", c.Ingest.IdempMaxEntries)
+	}
+	// pprof exposes heap, goroutine, and CPU profiles — it must never be
+	// reachable from outside the host. The bearer token is not a sufficient
+	// guard here: profiling endpoints take arbitrary durations and are a
+	// natural DoS vector. Refuse the combination at boot instead of
+	// papering over it with a middleware check.
+	if c.Server.PprofEnabled && !c.IsLoopbackBind() {
+		return fmt.Errorf(
+			"refusing to enable pprof on non-loopback bind %q: "+
+				"/debug/pprof exposes heap and CPU profiles and must only be reachable via 127.0.0.1",
 			c.Server.Bind,
 		)
 	}
