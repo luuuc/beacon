@@ -31,10 +31,21 @@ module Beacon
 
       # Global kill switch. When false, Beacon::Middleware is a
       # passthrough, Beacon.track returns nil, and the flusher thread
-      # is not started. Also driven by ENV["BEACON_DISABLED"] — setting
-      # that to any truthy value forces @enabled to false at config
-      # time regardless of the app's `c.enabled = true`.
-      @enabled = !truthy_env?("BEACON_DISABLED")
+      # is not started.
+      #
+      # Default resolution (in priority order):
+      #   1. BEACON_DISABLED explicitly set → honored in both directions.
+      #        "1" / "true" / "yes" / "on"   → disabled
+      #        "0" / "false" / "no" / "off"  → forced enabled
+      #   2. RAILS_ENV / RACK_ENV is "test" → disabled.
+      #   3. Otherwise → enabled (development, staging, production).
+      #
+      # The test-env default matches Honeybadger/Sentry/AppSignal: an
+      # observability gem should not chatter across a hermetic test
+      # suite by default. A test that WANTS to assert Beacon was called
+      # (via Beacon::Testing::FakeTransport) opts back in locally, or
+      # sets BEACON_DISABLED=0 for the whole run.
+      @enabled = default_enabled
     end
 
     def enabled?
@@ -46,6 +57,16 @@ module Beacon
     end
 
     private
+
+    def default_enabled
+      v = ENV["BEACON_DISABLED"]
+      return !truthy_env?("BEACON_DISABLED") unless v.nil? || v.empty?
+      !test_environment?
+    end
+
+    def test_environment?
+      ENV["RAILS_ENV"] == "test" || ENV["RACK_ENV"] == "test"
+    end
 
     def truthy_env?(name)
       v = ENV[name]

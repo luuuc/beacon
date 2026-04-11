@@ -11,17 +11,27 @@ class KillSwitchTest < Minitest::Test
 
   def setup
     @orig_disabled = ENV["BEACON_DISABLED"]
+    @orig_rails    = ENV["RAILS_ENV"]
+    @orig_rack     = ENV["RACK_ENV"]
     ENV.delete("BEACON_DISABLED")
+    ENV.delete("RAILS_ENV")
+    ENV.delete("RACK_ENV")
     Beacon::Testing.reset_config!
   end
 
   def teardown
-    if @orig_disabled
-      ENV["BEACON_DISABLED"] = @orig_disabled
-    else
-      ENV.delete("BEACON_DISABLED")
-    end
+    restore_env("BEACON_DISABLED", @orig_disabled)
+    restore_env("RAILS_ENV",       @orig_rails)
+    restore_env("RACK_ENV",        @orig_rack)
     Beacon::Testing.reset_config!
+  end
+
+  def restore_env(key, value)
+    if value.nil?
+      ENV.delete(key)
+    else
+      ENV[key] = value
+    end
   end
 
   # --- Configuration.enabled? --------------------------------------------
@@ -55,6 +65,64 @@ class KillSwitchTest < Minitest::Test
       Beacon::Testing.reset_config!
       assert Beacon.config.enabled?, "BEACON_DISABLED=#{val.inspect} should not disable"
     end
+  end
+
+  # --- Auto-disable in test environments (v0.1.2) ------------------------
+  #
+  # Beacon should default to disabled in Rails/Rack test env so an
+  # integration-style test suite doesn't need to configure the gem or
+  # run a real accessory. Explicit BEACON_DISABLED still wins in both
+  # directions so a deliberate smoke can opt back in.
+
+  def test_rails_env_test_defaults_to_disabled
+    ENV["RAILS_ENV"] = "test"
+    Beacon::Testing.reset_config!
+    refute Beacon.config.enabled?,
+      "RAILS_ENV=test should auto-disable Beacon by default"
+  end
+
+  def test_rack_env_test_defaults_to_disabled
+    ENV["RACK_ENV"] = "test"
+    Beacon::Testing.reset_config!
+    refute Beacon.config.enabled?,
+      "RACK_ENV=test should auto-disable Beacon by default"
+  end
+
+  def test_rails_env_development_stays_enabled
+    ENV["RAILS_ENV"] = "development"
+    Beacon::Testing.reset_config!
+    assert Beacon.config.enabled?,
+      "RAILS_ENV=development must not auto-disable — devs want live events"
+  end
+
+  def test_rails_env_production_stays_enabled
+    ENV["RAILS_ENV"] = "production"
+    Beacon::Testing.reset_config!
+    assert Beacon.config.enabled?,
+      "RAILS_ENV=production must not auto-disable"
+  end
+
+  def test_rails_env_staging_stays_enabled
+    ENV["RAILS_ENV"] = "staging"
+    Beacon::Testing.reset_config!
+    assert Beacon.config.enabled?,
+      "RAILS_ENV=staging must not auto-disable"
+  end
+
+  def test_explicit_beacon_disabled_0_re_enables_in_test_env
+    ENV["RAILS_ENV"]       = "test"
+    ENV["BEACON_DISABLED"] = "0"
+    Beacon::Testing.reset_config!
+    assert Beacon.config.enabled?,
+      "BEACON_DISABLED=0 must force-enable even in test env"
+  end
+
+  def test_explicit_beacon_disabled_1_disables_in_production
+    ENV["RAILS_ENV"]       = "production"
+    ENV["BEACON_DISABLED"] = "1"
+    Beacon::Testing.reset_config!
+    refute Beacon.config.enabled?,
+      "BEACON_DISABLED=1 must force-disable even in production"
   end
 
   def test_nil_endpoint_makes_config_unusable
