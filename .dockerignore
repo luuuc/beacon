@@ -1,0 +1,63 @@
+# Minimize the build context sent to the Docker daemon.
+# Only source code needed for `go build ./cmd/beacon` should be copied in.
+
+# VCS and build caches
+.git
+.gitattributes
+.github
+
+# Private / local workspace — also covered by .gitignore but repeated here
+# because .dockerignore is evaluated independently of git tracking.
+.doc
+doc
+.claude
+CLAUDE.md
+.claude.json
+.opencode
+.cursor
+.cursorrules
+.cursorignore
+.codex
+.aider*
+.continue
+.windsurf
+AGENTS.md
+
+# Editor / OS
+.vscode
+.idea
+.ruby-lsp
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Clients and specs — unrelated to the Go binary
+clients
+spec
+
+# Docs and top-level markdown — not needed at build time; LICENSE stays
+# out of the final image and ships alongside the repo.
+README.md
+LICENSE
+
+# Go workspace / build artifacts
+go.work
+go.work.sum
+/beacon
+/beacon-bench
+/bin
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Runtime / data
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.log
+*.env
+.env
+.env.*
