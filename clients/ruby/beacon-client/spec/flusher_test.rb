@@ -162,7 +162,7 @@ class FlusherTest < Minitest::Test
     assert_equal "outcome",          event["kind"]
     assert_equal "signup.completed", event["name"]
     assert_equal "FakeUserClass",    event["actor_type"]
-    assert_equal 42,                 event["actor_id"]
+    assert_equal "42",               event["actor_id"]
     assert_equal({ "plan" => "pro" }, event["properties"])
   end
 

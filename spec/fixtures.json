@@ -132,7 +132,20 @@
         }
       },
       {
-        "name": "outcome event with context + properties",
+        "name": "outcome event with context + properties (uuid actor)",
+        "valid": true,
+        "event": {
+          "kind": "outcome",
+          "name": "signup.completed",
+          "created_at": "2026-04-10T12:00:00Z",
+          "actor_type": "User",
+          "actor_id": "019245ab-d36e-7000-8000-000000000001",
+          "properties": { "plan": "pro" },
+          "context": { "request_id": "abc-123", "deploy_sha": "9f3a2c1", "environment": "production" }
+        }
+      },
+      {
+        "name": "outcome event with legacy integer actor (v0.2.0 still accepts)",
         "valid": true,
         "event": {
           "kind": "outcome",
@@ -140,8 +153,7 @@
           "created_at": "2026-04-10T12:00:00Z",
           "actor_type": "User",
           "actor_id": 42,
-          "properties": { "plan": "pro" },
-          "context": { "request_id": "abc-123", "deploy_sha": "9f3a2c1", "environment": "production" }
+          "properties": { "plan": "pro" }
         }
       },
       {

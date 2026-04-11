@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +16,11 @@ const (
 	MaxNameLen = 128
 	// MaxActorTypeLen is the per-spec ceiling on actor_type.
 	MaxActorTypeLen = 64
+	// MaxActorIDLen is the per-spec ceiling on actor_id. 128 chars is
+	// wider than any realistic identifier format — UUID (36), ULID (26),
+	// Snowflake (19), Stripe-style "acct_xxx" (27) — so integrators can
+	// bind their native user primary key regardless of type.
+	MaxActorIDLen = 128
 	// MaxPropertiesBytes is the per-spec ceiling on a single event's properties (serialized).
 	MaxPropertiesBytes = 16 * 1024
 
@@ -34,6 +38,11 @@ type batchRequest struct {
 }
 
 // envelopeJSON is the on-the-wire shape of a single event.
+//
+// ActorID is held as json.RawMessage so the envelope can accept either
+// a JSON string (`"actor_id": "019245ab-..."` — the v0.2.0+ UUID path)
+// or a JSON number (`"actor_id": 42` — the legacy integer path). Both
+// are normalized to a string in the lifted beacondb.Event.
 type envelopeJSON struct {
 	Kind       string          `json:"kind"`
 	Name       string          `json:"name"`
@@ -85,7 +94,7 @@ func (e *envelopeJSON) toEvent(now time.Time) (beacondb.Event, []string, error) 
 		warnings = append(warnings, "late_arriving")
 	}
 
-	var actorID int64
+	var actorID string
 	if len(e.ActorID) > 0 {
 		id, perr := parseActorID(e.ActorID)
 		if perr != nil {
@@ -165,33 +174,37 @@ func parseRFC3339(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-// parseActorID accepts a JSON number or a JSON string containing digits.
-// Non-numeric strings are rejected; v1's storage model is BIGINT and we
-// don't want to silently drop or hash non-numeric IDs.
-func parseActorID(raw json.RawMessage) (int64, error) {
+// parseActorID accepts a JSON string or a JSON number and returns the
+// canonical string form. Any non-empty value up to MaxActorIDLen is
+// accepted so UUIDs (Rails 7.1+), ULIDs, Snowflakes, and legacy
+// integer IDs all round-trip cleanly. Empty strings and the JSON
+// literal null both mean "no actor" and return "".
+func parseActorID(raw json.RawMessage) (string, error) {
 	s := strings.TrimSpace(string(raw))
 	if len(s) == 0 || s == "null" {
-		return 0, nil
+		return "", nil
 	}
+	var out string
 	if s[0] == '"' {
-		var str string
-		if err := json.Unmarshal(raw, &str); err != nil {
-			return 0, err
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return "", err
 		}
-		if str == "" {
-			return 0, nil
+	} else {
+		// JSON number — use json.Number to preserve the lexical form
+		// (no float rounding for IDs that happen to exceed int64).
+		var n json.Number
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return "", err
 		}
-		n, err := strconv.ParseInt(str, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("expected integer or digit-string, got %q", str)
-		}
-		return n, nil
+		out = n.String()
 	}
-	var n json.Number
-	if err := json.Unmarshal(raw, &n); err != nil {
-		return 0, err
+	if out == "" {
+		return "", nil
 	}
-	return n.Int64()
+	if len(out) > MaxActorIDLen {
+		return "", fmt.Errorf("actor_id exceeds %d chars", MaxActorIDLen)
+	}
+	return out, nil
 }
 
 // extractInt32 pulls a numeric field from a properties map, accepting the

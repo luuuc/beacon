@@ -154,14 +154,14 @@ func TestBadRequest400(t *testing.T) {
 			"fingerprint is required",
 		},
 		{
-			"non-numeric actor_id string",
+			"actor_id exceeds max length",
 			[]map[string]any{{
 				"kind":       "outcome",
 				"name":       "x",
 				"created_at": fixedNow.Format(time.RFC3339),
-				"actor_id":   "user-abc",
+				"actor_id":   strings.Repeat("a", 129),
 			}},
-			"actor_id",
+			"actor_id exceeds",
 		},
 	}
 	for _, tc := range cases {
@@ -180,6 +180,60 @@ func TestBadRequest400(t *testing.T) {
 			mustDecode(t, rec.Body.Bytes(), &resp)
 			if _, ok := resp["events_rejected"]; !ok {
 				t.Errorf("400 body missing events_rejected: %v", resp)
+			}
+		})
+	}
+}
+
+// TestActorIDAcceptsAnyString pins the v0.2.0 contract: actor_id is now
+// a free-form string up to MaxActorIDLen. UUIDs (Rails 7.1+), ULIDs,
+// Snowflakes, legacy integers, and integer-as-string all round-trip
+// losslessly to the stored Event.
+func TestActorIDAcceptsAnyString(t *testing.T) {
+	cases := []struct {
+		name    string
+		rawJSON string
+		want    string
+	}{
+		{"uuid v7", `"019245ab-d36e-7000-8000-000000000001"`, "019245ab-d36e-7000-8000-000000000001"},
+		{"ulid", `"01HZABCDEFGHJKMNPQRSTVWXYZ"`, "01HZABCDEFGHJKMNPQRSTVWXYZ"},
+		{"integer as number", `42`, "42"},
+		{"integer as string", `"42"`, "42"},
+		{"string prefixed", `"acct_x1Y2z3A4b5C6"`, "acct_x1Y2z3A4b5C6"},
+		{"bigint beyond int64", `"99999999999999999999"`, "99999999999999999999"},
+		{"empty string", `""`, ""},
+		{"null", `null`, ""},
+		{"field omitted", ``, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fake := newTestHandler(t, Config{})
+			event := map[string]any{
+				"kind":       "outcome",
+				"name":       "actor.test",
+				"created_at": fixedNow.Format(time.RFC3339),
+				"actor_type": "User",
+			}
+			if tc.rawJSON != "" {
+				var v any
+				if err := json.Unmarshal([]byte(tc.rawJSON), &v); err != nil {
+					t.Fatalf("unmarshal raw: %v", err)
+				}
+				event["actor_id"] = v
+			}
+			rec := doPost(t, h, makeBatch(event), nil)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
+			}
+			events, err := fake.ListEvents(context.Background(), beacondb.EventFilter{Name: "actor.test"})
+			if err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("len(events) = %d, want 1", len(events))
+			}
+			if got := events[0].ActorID; got != tc.want {
+				t.Errorf("ActorID = %q, want %q", got, tc.want)
 			}
 		})
 	}

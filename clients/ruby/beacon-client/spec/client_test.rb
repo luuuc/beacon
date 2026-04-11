@@ -36,14 +36,28 @@ class ClientTest < Minitest::Test
   end
 
   def test_user_shorthand_extracts_actor
+    # Integer IDs are stringified so the single actor_id code path
+    # handles both legacy integer PKs and modern UUID PKs uniformly.
     user = FakeUser.new(42)
     @client.track("signup.completed", user: user, plan: "pro")
     event = @client.queue.drain(1).first
 
     assert_equal "User", event[:actor_type]
-    assert_equal 42,     event[:actor_id]
+    assert_equal "42",   event[:actor_id]
     assert_equal({ plan: "pro" }, event[:properties])
     refute event[:properties].key?(:user)
+  end
+
+  def test_user_shorthand_passes_uuid_through_unchanged
+    # v0.2.0 contract: Rails 7.1+ UUID primary keys land in actor_id
+    # as-is. No parsing, no validation — Beacon's server accepts any
+    # string up to 128 chars.
+    user = FakeUser.new("019245ab-d36e-7000-8000-000000000001")
+    @client.track("user.signed_up", user: user)
+    event = @client.queue.drain(1).first
+
+    assert_equal "User", event[:actor_type]
+    assert_equal "019245ab-d36e-7000-8000-000000000001", event[:actor_id]
   end
 
   def test_track_does_not_mutate_caller_hash

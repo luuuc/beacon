@@ -58,12 +58,19 @@ const (
 )
 
 // Event is one raw row of beacon_events. Pointer fields are nullable in SQL.
+//
+// ActorID is stored as a string so modern Rails apps with UUID primary
+// keys (Rails 7.1+ default on Postgres, universal in Rails 8.1) can
+// track their users natively. Numeric IDs from legacy apps serialize as
+// digit strings and round-trip losslessly; empty string means "no
+// actor bound." The 128-char ceiling in envelope.MaxActorIDLen is
+// wider than any realistic ID format (UUID=36, ULID=26, Snowflake=19).
 type Event struct {
 	ID          int64
 	Kind        Kind
 	Name        string
 	ActorType   string
-	ActorID     int64
+	ActorID     string
 	DurationMs  *int32
 	Status      *int32
 	Fingerprint string         // error events only; "" otherwise

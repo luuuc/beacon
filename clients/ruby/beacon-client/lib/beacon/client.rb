@@ -103,12 +103,18 @@ module Beacon
       @flusher.start
     end
 
+    # Extract actor_type / actor_id from the :user shorthand. user.id is
+    # stringified so UUIDs (Rails 7.1+), ULIDs, Snowflakes, and legacy
+    # integer IDs all land in the server's TEXT actor_id column without
+    # the caller having to know the difference. Stringifying an integer
+    # is free; skipping it for integers and stringifying for UUIDs would
+    # just be a branch with no upside.
     def extract_actor(props)
       user = props.delete(:user)
       return [nil, nil] unless user
       type = user.class.name
       id   = user.respond_to?(:id) ? user.id : nil
-      [type, id]
+      [type, id.nil? ? nil : id.to_s]
     end
 
     def base_context
