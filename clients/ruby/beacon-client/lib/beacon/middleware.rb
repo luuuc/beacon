@@ -106,7 +106,13 @@ module Beacon
       method      = env["REQUEST_METHOD"] || "GET"
       template    = env["beacon.route_template"]
       path        = env["PATH_INFO"] || "/"
-      name        = template ? "#{method} #{template}" : cached_name(method, path)
+      # `template` is already in "<METHOD> <path-template>" shape per
+      # spec/fixtures.json's cross-client contract (see the Railtie's
+      # start_processing.action_controller subscriber), so we use it
+      # verbatim. Pre-v0.2.2 this branch prepended method again,
+      # producing "GET GET /users/:id" in every perf rollup when the
+      # Railtie integration was loaded.
+      name        = template || cached_name(method, path)
 
       @sink << {
         kind: :perf,

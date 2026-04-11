@@ -32,11 +32,28 @@ class MiddlewareTest < Minitest::Test
   end
 
   def test_route_template_short_circuits_normalizer
+    # The Railtie subscriber stores the full "<METHOD> <template>" shape
+    # (same cross-client contract as PathNormalizer). Middleware uses it
+    # verbatim — no re-prefixing, no double-method regression.
     mw  = Beacon::Middleware.new(OK_APP, sink: @sink)
     env = Rack::MockRequest.env_for("/users/42", method: "GET")
-    env["beacon.route_template"] = "/users/:user_id"
+    env["beacon.route_template"] = "GET /users/:user_id"
     mw.call(env)
     assert_equal "GET /users/:user_id", @sink.events.first[:name]
+  end
+
+  def test_route_template_is_not_double_prefixed
+    # v0.2.2 regression guard: pre-fix this test would have returned
+    # "GET GET /users/:user_id" because the middleware prepended method
+    # on top of a template that already included it. The staging
+    # deploy on 2026-04-11 hit this in every single perf rollup.
+    mw  = Beacon::Middleware.new(OK_APP, sink: @sink)
+    env = Rack::MockRequest.env_for("/users/42", method: "GET")
+    env["beacon.route_template"] = "GET /users/:user_id"
+    mw.call(env)
+    name = @sink.events.first[:name]
+    refute_match(/\A(\w+)\s+\1\s/, name,
+      "middleware must not prepend method when template already has one (got #{name.inspect})")
   end
 
   def test_query_string_does_not_appear_in_name

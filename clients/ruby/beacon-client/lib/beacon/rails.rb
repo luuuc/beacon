@@ -52,18 +52,20 @@ module Beacon
     end
 
     # Route template subscriber. Fires at the start of every controller
-    # action (after routing, before the action runs) and writes the matched
-    # route template into the request env so Beacon::Middleware — which
-    # sits outside the router — can read it when the action returns.
+    # action (after routing, before the action runs) and writes the
+    # matched route template into the request env so Beacon::Middleware
+    # — which sits outside the router — can read it when the action
+    # returns.
     #
     # Shape: "<METHOD> <path-template>", e.g. "GET /users/:id" — same
-    # format as the regex fallback in PathNormalizer, so the dashboard
-    # groups Rails and non-Rails clients the same way.
+    # format as the PathNormalizer fallback and the cross-client
+    # contract pinned in spec/fixtures.json's path_normalization
+    # section. The middleware trusts this string verbatim.
     #
-    # Source of truth: Rails 7.1+ stashes the matched route's URI pattern
-    # on env["action_dispatch.route_uri_pattern"]. For older Rails we fall
-    # back to controller#action, which is still useful even if it's not
-    # the exact template.
+    # Source of truth: Rails 7.1+ stashes the matched route's URI
+    # pattern on request.route_uri_pattern (a method on the request,
+    # not an env key). The matched pattern is set on the request
+    # instance by the router.
     initializer "beacon.subscribe_action_controller", after: :load_config_initializers do |_app|
       next unless defined?(::ActiveSupport::Notifications)
       Beacon::Railtie.instance_variable_set(:@subscriber_log_throttle, Beacon::LogThrottle.new)
@@ -104,15 +106,16 @@ module Beacon
     ROUTE_FORMAT_SUFFIX = "(.:format)".freeze
 
     # Extract "<METHOD> <path-template>" from a start_processing payload.
-    # Returns nil when no template is available — the middleware then falls
-    # through to Beacon::PathNormalizer, which is the documented fallback.
-    # We deliberately do not emit a controller#action string here: mixing
-    # two label shapes on one dashboard produces confusing groupings.
+    # Returns nil when no template is available — the middleware then
+    # falls through to Beacon::PathNormalizer, which is the documented
+    # cross-client fallback and emits the same shape. We deliberately
+    # do not emit a controller#action string here: mixing two label
+    # shapes on one dashboard produces confusing groupings.
     #
-    # Source of truth: ActionDispatch::Request#route_uri_pattern (Rails 7.1+).
-    # This is a *method* on the request object, not an env key — the matched
-    # pattern is stored on the request instance by the router and read via
-    # the public accessor.
+    # Source of truth: ActionDispatch::Request#route_uri_pattern
+    # (Rails 7.1+). This is a *method* on the request object, not an
+    # env key — the matched pattern is stored on the request instance
+    # by the router and read via the public accessor.
     def self.route_template_for(env, payload)
       method  = env["REQUEST_METHOD"]
       request = payload[:request]
