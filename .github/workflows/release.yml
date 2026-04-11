@@ -32,6 +32,13 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}   # luuuc/beacon
+  # Force docker/* actions (still on Node 20 runtimes as of Apr 2026) to
+  # run under Node.js 24. Documented escape hatch from
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  # Becomes a no-op once Node 24 is the runner default in June 2026;
+  # remove this line then (or once the docker org ships Node-24 majors
+  # for all of login/metadata/setup-*/build-push).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-and-push:
