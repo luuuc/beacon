@@ -608,6 +608,28 @@ func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, nam
 }
 
 // ---------------------------------------------------------------------------
+// GetRecentErrorEvents (dashboard)
+// ---------------------------------------------------------------------------
+
+// GetRecentErrorEvents returns the N most recent raw error events matching
+// the given fingerprint. Used by the dashboard error detail page for sample
+// stack traces.
+func (h *Handler) GetRecentErrorEvents(ctx context.Context, fingerprint string, limit int) ([]beacondb.Event, error) {
+	if fingerprint == "" || limit <= 0 {
+		return nil, nil
+	}
+	events, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:        beacondb.KindError,
+		Fingerprint: fingerprint,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list error events: %w", err)
+	}
+	return events, nil
+}
+
+// ---------------------------------------------------------------------------
 // GetOutcomeSummaries (dashboard)
 // ---------------------------------------------------------------------------
 
