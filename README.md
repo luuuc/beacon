@@ -67,6 +67,33 @@ Both are 50× under the committed 50 µs ceiling. The Rack middleware allocates 
 
 See the deploy recipes linked in the operator docs shipped with the binary.
 
+## AI agent access (MCP)
+
+AI code tools query Beacon via MCP over a stdio proxy baked into the binary. Install the binary on your dev machine, then point your tool's MCP config at it.
+
+```bash
+# Install
+go install github.com/luuuc/beacon/cmd/beacon@latest
+```
+
+Add a `.mcp.json` to your project root:
+
+```json
+{
+  "mcpServers": {
+    "beacon": {
+      "command": "beacon",
+      "args": ["mcp", "proxy", "http://localhost:4681/rpc"],
+      "env": { "BEACON_AUTH_TOKEN": "devtoken" }
+    }
+  }
+}
+```
+
+For staging/production, replace the URL with an HTTPS endpoint (e.g. `https://beacon-mcp.example.com/rpc`) and set the token from an environment variable.
+
+Six read-only tools appear in Claude Code, Claude Desktop, or Cursor: `beacon.errors`, `beacon.perf_drift`, `beacon.metric`, `beacon.compare`, `beacon.outcome_check`, and `beacon.deploy_baseline`.
+
 ## Clients
 
 - **Ruby** (`clients/ruby/beacon-client`) — the reference client. Rack middleware + `ActiveSupport::Notifications` subscribers. Zero runtime gem dependencies; pure stdlib transport. Works in Rails, Sinatra, and raw Rack.
