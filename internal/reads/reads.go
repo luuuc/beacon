@@ -608,6 +608,78 @@ func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, nam
 }
 
 // ---------------------------------------------------------------------------
+// GetOutcomeSummaries (dashboard)
+// ---------------------------------------------------------------------------
+
+// OutcomeSummary is one outcome metric's recent activity and baseline drift.
+type OutcomeSummary struct {
+	Name           string    `json:"name"`
+	DailyCount     int64     `json:"daily_count"`
+	HourlyCounts   []float64 `json:"-"` // raw hourly series for sparklines
+	DriftPercent   float64   `json:"drift_percent"`   // vs 30d baseline mean
+	BaselineMean   float64   `json:"baseline_mean"`
+}
+
+// GetOutcomeSummaries lists all outcome metrics active in the window,
+// each with its current daily count, sparkline series, and drift from
+// the 30-day baseline. Results are sorted by absolute drift descending.
+func (h *Handler) GetOutcomeSummaries(ctx context.Context, window time.Duration) ([]OutcomeSummary, error) {
+	if window == 0 {
+		window = 7 * 24 * time.Hour
+	}
+	now := h.now().UTC()
+	since := now.Add(-window)
+
+	hourlies, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
+		Kind:       beacondb.KindOutcome,
+		PeriodKind: beacondb.PeriodHour,
+		Since:      since,
+		Until:      now.Add(time.Hour),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list outcome metrics: %w", err)
+	}
+
+	type acc struct {
+		total   int64
+		hourly  []float64
+	}
+	byName := map[string]*acc{}
+	for _, m := range hourlies {
+		a, ok := byName[m.Name]
+		if !ok {
+			a = &acc{}
+			byName[m.Name] = a
+		}
+		a.total += m.Count
+		a.hourly = append(a.hourly, float64(m.Count))
+	}
+
+	out := make([]OutcomeSummary, 0, len(byName))
+	for name, a := range byName {
+		baseline, _ := h.buildBaselineSummary(ctx, beacondb.KindOutcome, name, now)
+		var drift float64
+		var bMean float64
+		if baseline != nil && baseline.HourlyCountMean > 0 {
+			bMean = baseline.HourlyCountMean
+			currentMean := mean(a.hourly)
+			drift = ((currentMean - bMean) / bMean) * 100
+		}
+		out = append(out, OutcomeSummary{
+			Name:         name,
+			DailyCount:   a.total,
+			HourlyCounts: a.hourly,
+			DriftPercent: roundTo(drift, 1),
+			BaselineMean: roundTo(bMean, 2),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return math.Abs(out[i].DriftPercent) > math.Abs(out[j].DriftPercent)
+	})
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

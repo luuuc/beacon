@@ -402,6 +402,88 @@ func TestParseWindow(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// GetOutcomeSummaries
+// ---------------------------------------------------------------------------
+
+func TestOutcomeSummaries_driftOrdering(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	// Seed two outcome metrics with different baseline profiles.
+	// "steady" has a flat baseline matching current → ~0% drift.
+	// "spiked" has a low baseline but high recent counts → large drift.
+	base := fixedNow.Add(-30 * 24 * time.Hour).Truncate(time.Hour)
+
+	// Baseline period (30d): steady=10/hr, spiked=5/hr
+	for i := 0; i < 200; i++ {
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "steady",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		})
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "spiked",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       5,
+		})
+	}
+
+	// Recent window (last 24h): steady stays 10/hr, spiked jumps to 50/hr.
+	recent := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 24; i++ {
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "steady",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: recent.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		})
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "spiked",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: recent.Add(time.Duration(i) * time.Hour),
+			Count:       50,
+		})
+	}
+
+	summaries, err := h.GetOutcomeSummaries(context.Background(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("GetOutcomeSummaries: %v", err)
+	}
+	if len(summaries) < 2 {
+		t.Fatalf("got %d summaries, want >= 2", len(summaries))
+	}
+
+	// "spiked" should be first — it has the largest absolute drift.
+	if summaries[0].Name != "spiked" {
+		t.Errorf("first summary = %q, want spiked (highest drift)", summaries[0].Name)
+	}
+	if summaries[0].DriftPercent <= 0 {
+		t.Errorf("spiked drift = %.1f%%, want positive", summaries[0].DriftPercent)
+	}
+
+	// "steady" should have near-zero drift.
+	var steady *OutcomeSummary
+	for i := range summaries {
+		if summaries[i].Name == "steady" {
+			steady = &summaries[i]
+			break
+		}
+	}
+	if steady == nil {
+		t.Fatal("steady not found in summaries")
+	}
+	if steady.DriftPercent > 5 || steady.DriftPercent < -5 {
+		t.Errorf("steady drift = %.1f%%, want near zero", steady.DriftPercent)
+	}
+
+	// HourlyCounts should be populated for sparklines.
+	if len(summaries[0].HourlyCounts) == 0 {
+		t.Error("spiked HourlyCounts is empty")
+	}
+}
+
 func TestMeanStddev(t *testing.T) {
 	m, s := meanStddev([]float64{10, 20, 30, 40, 50})
 	if m != 30 {
