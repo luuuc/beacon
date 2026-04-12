@@ -30,15 +30,14 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestRunStubSubcommands(t *testing.T) {
-	// mcp is still a stub; it errors "not implemented" until the MCP card.
+func TestRunMCPRequiresSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"mcp"}, &out, &errb)
 	if code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), "not implemented") {
-		t.Errorf("stderr missing 'not implemented': %q", errb.String())
+	if !strings.Contains(errb.String(), "subcommand required") {
+		t.Errorf("stderr missing 'subcommand required': %q", errb.String())
 	}
 }
 

@@ -40,7 +40,7 @@ Commands:
   serve       Run the HTTP (and eventually MCP) listeners and rollup worker
   rollup      Run or recompute rollups (not yet implemented)
   baselines   Manage baselines (not yet implemented)
-  mcp         Run the MCP server standalone (not yet implemented)
+  mcp proxy   Stdio-to-HTTP proxy for MCP clients (Claude Code, etc.)
 
 Run 'beacon <command> -h' for command-specific flags.
 `
@@ -62,8 +62,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "baselines":
 		return cmdBaselines(rest, log, stderr)
 	case "mcp":
-		fmt.Fprintf(stderr, "beacon %s: not implemented yet (pitch 00 card for this subsystem has not landed)\n", cmd)
-		return 2
+		return cmdMCP(rest, stdout, stderr)
 	case "version", "-v", "--version":
 		fmt.Fprintf(stdout, "beacon %s\n", version.Version)
 		return 0
