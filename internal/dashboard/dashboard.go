@@ -27,10 +27,12 @@ type Dashboard struct {
 	cfg   Config
 	reads *reads.Handler
 	log   *slog.Logger
-	tmpls *template.Template
+	pages map[string]*template.Template
 }
 
-// New parses embedded templates and returns a ready Dashboard.
+// New parses embedded templates and returns a ready Dashboard. Each page
+// template is parsed independently with the layout and partials so that
+// multiple pages can define {{define "content"}} without colliding.
 func New(cfg Config, readsH *reads.Handler, log *slog.Logger) *Dashboard {
 	if log == nil {
 		log = slog.Default()
@@ -38,14 +40,41 @@ func New(cfg Config, readsH *reads.Handler, log *slog.Logger) *Dashboard {
 	funcMap := template.FuncMap{
 		"sparkline": SparklineSVG,
 	}
-	tmpls := template.Must(
-		template.New("").Funcs(funcMap).ParseFS(content, "templates/*.html", "templates/partials/*.html"),
+
+	// Parse layout + partials as the base set. Each page clones this
+	// base and adds its own template file.
+	base := template.Must(
+		template.New("").Funcs(funcMap).ParseFS(content,
+			"templates/layout.html",
+			"templates/partials/*.html",
+		),
 	)
+
+	pageFiles := []string{
+		"templates/login.html",
+		"templates/landing.html",
+		"templates/outcomes.html",
+		"templates/performance.html",
+		"templates/errors.html",
+		"templates/metric_detail.html",
+		"templates/endpoint_detail.html",
+		"templates/error_detail.html",
+	}
+
+	pages := make(map[string]*template.Template, len(pageFiles))
+	for _, pf := range pageFiles {
+		clone := template.Must(base.Clone())
+		template.Must(clone.ParseFS(content, pf))
+		// Key by the define name, e.g. "landing.html".
+		name := pf[len("templates/"):]
+		pages[name] = clone
+	}
+
 	return &Dashboard{
 		cfg:   cfg,
 		reads: readsH,
 		log:   log,
-		tmpls: tmpls,
+		pages: pages,
 	}
 }
 
@@ -86,12 +115,19 @@ func (d *Dashboard) Mount(mux interface {
 func (d *Dashboard) render(w http.ResponseWriter, r *http.Request, page string, partial string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	tmpl, ok := d.pages[page]
+	if !ok {
+		d.log.Error("template not found", "page", page)
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
+	}
+
 	name := page
 	if partial != "" && r.Header.Get("HX-Request") == "true" {
 		name = partial
 	}
 
-	if err := d.tmpls.ExecuteTemplate(w, name, data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		d.log.Error("template render", "template", name, "err", err)
 		http.Error(w, "render error", http.StatusInternalServerError)
 	}

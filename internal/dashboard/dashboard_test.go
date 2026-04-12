@@ -6,22 +6,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/beacondb/memfake"
 	"github.com/luuuc/beacon/internal/reads"
 )
 
+var fixedNow = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+
 func newTestDashboard(t *testing.T, authToken string) (*Dashboard, *http.ServeMux) {
+	t.Helper()
+	_, _, mux := newTestDashboardWithFake(t, authToken)
+	return nil, mux
+}
+
+func newTestDashboardWithFake(t *testing.T, authToken string) (*Dashboard, *memfake.Fake, *http.ServeMux) {
 	t.Helper()
 	fake := memfake.New()
 	if err := fake.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	readsH := reads.NewHandler(reads.Config{AuthToken: authToken}, fake, nil)
+	readsH := reads.NewHandler(reads.Config{AuthToken: authToken, Now: func() time.Time { return fixedNow }}, fake, nil)
 	d := New(Config{AuthToken: authToken}, readsH, nil)
 	mux := http.NewServeMux()
 	d.Mount(mux)
-	return d, mux
+	return d, fake, mux
 }
 
 func TestTemplatesParse(t *testing.T) {
@@ -96,6 +106,74 @@ func TestLandingPageRequiresAuth(t *testing.T) {
 	loc := rec.Header().Get("Location")
 	if loc != "/login" {
 		t.Errorf("redirect to %q, want /login", loc)
+	}
+}
+
+func TestLandingPageWithData(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+
+	ctx := context.Background()
+	base := fixedNow.Add(-48 * time.Hour).Truncate(time.Hour)
+
+	// Seed outcome metric.
+	for i := 0; i < 24; i++ {
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		}})
+	}
+
+	// Seed perf metric with drift.
+	for i := 0; i < 48; i++ {
+		p95 := 100.0
+		if i >= 24 {
+			p95 = 200.0 // spike in recent 24h
+		}
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "GET /dashboard",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       50, P95: &p95,
+		}})
+	}
+
+	// Seed error metric.
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "abc123",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-2 * time.Hour).Truncate(time.Hour),
+		Count:       5,
+	}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Should have three headline cards.
+	if !strings.Contains(body, "Outcomes") {
+		t.Error("missing Outcomes card")
+	}
+	if !strings.Contains(body, "signup.completed") {
+		t.Error("missing signup.completed in outcomes card")
+	}
+	if !strings.Contains(body, "Performance") {
+		t.Error("missing Performance card")
+	}
+	if !strings.Contains(body, "GET /dashboard") {
+		t.Error("missing GET /dashboard in performance card")
+	}
+	if !strings.Contains(body, "Errors") {
+		t.Error("missing Errors card")
+	}
+	if !strings.Contains(body, "NoMethodError") {
+		t.Error("missing NoMethodError in errors card")
 	}
 }
 
