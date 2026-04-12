@@ -177,6 +177,229 @@ func TestLandingPageWithData(t *testing.T) {
 	}
 }
 
+func seedTestData(t *testing.T, fake *memfake.Fake) {
+	t.Helper()
+	ctx := context.Background()
+	base := fixedNow.Add(-48 * time.Hour).Truncate(time.Hour)
+
+	for i := 0; i < 24; i++ {
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		}})
+	}
+
+	for i := 0; i < 48; i++ {
+		p95 := 100.0
+		if i >= 24 {
+			p95 = 200.0
+		}
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "GET /dashboard",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       50, P95: &p95,
+		}})
+	}
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "abc123",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-2 * time.Hour).Truncate(time.Hour),
+		Count:       5,
+	}})
+}
+
+func TestOutcomesPage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/outcomes", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /outcomes = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "signup.completed") {
+		t.Error("missing signup.completed card")
+	}
+	if !strings.Contains(body, "sparkline") {
+		t.Error("missing sparkline SVG")
+	}
+}
+
+func TestOutcomeDetailPage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/outcomes/signup.completed", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /outcomes/signup.completed = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "signup.completed") {
+		t.Error("missing metric name")
+	}
+	if !strings.Contains(body, "chart") {
+		t.Error("missing chart SVG")
+	}
+}
+
+func TestPerformancePage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /performance = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "GET /dashboard") {
+		t.Error("missing endpoint card")
+	}
+}
+
+func TestPerformanceDetailPage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	// Seed a perf metric with a simple name (no spaces) for URL-safe detail page test.
+	ctx := context.Background()
+	base := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 24; i++ {
+		p95 := 150.0
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "perf.dashboard",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       50, P95: &p95,
+		}})
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance/perf.dashboard", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /performance/perf.dashboard = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "perf.dashboard") {
+		t.Error("missing endpoint name")
+	}
+	if !strings.Contains(body, "chart") {
+		t.Error("missing chart SVG")
+	}
+}
+
+func TestErrorsPage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /errors = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "NoMethodError") {
+		t.Error("missing error card")
+	}
+}
+
+func TestErrorDetailPage(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors/abc123", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /errors/abc123 = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "NoMethodError") {
+		t.Error("missing error name")
+	}
+	if !strings.Contains(body, "abc123") {
+		t.Error("missing fingerprint")
+	}
+}
+
+func TestErrorsPage_newBadge(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	// Seed a "new" error (only in recent window) and an "old" one (also before window).
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "NewError", Fingerprint: "new-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-1 * time.Hour).Truncate(time.Hour),
+		Count:       1,
+	}})
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "OldError", Fingerprint: "old-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-10 * 24 * time.Hour).Truncate(time.Hour),
+		Count:       1,
+	}})
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "OldError", Fingerprint: "old-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-2 * time.Hour).Truncate(time.Hour),
+		Count:       1,
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "badge-new") {
+		t.Error("missing NEW badge for new-fp")
+	}
+}
+
+func TestErrorDetailPage_stackTrace(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	// Seed error metric so the detail page finds it.
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: "st-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-1 * time.Hour).Truncate(time.Hour),
+		Count:       3,
+	}})
+
+	// Seed a raw error event with a stack trace.
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind:        beacondb.KindError,
+		Name:        "RuntimeError",
+		Fingerprint: "st-fp",
+		Properties: map[string]any{
+			"stack_trace":    "app/controllers/checkout_controller.rb:42:in `process'\napp/models/order.rb:17:in `validate'",
+			"message":        "undefined method 'name'",
+			"first_app_frame": "app/controllers/checkout_controller.rb:42",
+		},
+		CreatedAt: fixedNow.Add(-30 * time.Minute),
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors/st-fp", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /errors/st-fp = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "RuntimeError") {
+		t.Error("missing error name")
+	}
+	if !strings.Contains(body, "checkout_controller.rb:42") {
+		t.Error("missing stack trace content")
+	}
+	if !strings.Contains(body, "<pre>") {
+		t.Error("stack trace not in <pre> block")
+	}
+}
+
 func TestLogin_correctToken(t *testing.T) {
 	_, mux := newTestDashboard(t, "secret-token")
 
