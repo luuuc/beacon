@@ -81,6 +81,7 @@ func New(cfg Config, readsH *reads.Handler, worker *rollup.Worker, log *slog.Log
 	}
 	s.registerTools()
 	mux := http.NewServeMux()
+	mux.Handle("GET /healthz", http.HandlerFunc(s.handleHealthz))
 	mux.Handle("POST /rpc", http.HandlerFunc(s.handleRPC))
 	s.http = &http.Server{
 		Addr:              net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port)),
@@ -154,6 +155,10 @@ const (
 	errInvalidParams  = -32602
 	errInternal       = -32603
 )
+
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.AuthToken != "" && !httputil.CheckBearer(r.Header.Get("Authorization"), s.cfg.AuthToken) {
