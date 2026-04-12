@@ -1,0 +1,10 @@
+{{define "outcome_card.html"}}
+<a href="/outcomes/{{.Name}}" class="card">
+  <div class="card-name">{{.Name}}</div>
+  <div class="card-sparkline">{{.Sparkline}}</div>
+  <div class="card-metrics">
+    <span class="card-count">{{.Count}}</span>
+    {{if .Drift}}<span class="card-drift {{.DriftClass}}">{{.Drift}}</span>{{end}}
+  </div>
+</a>
+{{end}}

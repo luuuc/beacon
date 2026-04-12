@@ -1,0 +1,20 @@
+{{define "content"}}
+<h1>{{.Name}}</h1>
+<p class="subtitle">Outcome metric detail</p>
+{{if .Chart}}
+<div class="chart-container">{{.Chart}}</div>
+{{end}}
+<div class="detail-stats">
+  {{if .Stats}}
+  <dl class="stats-grid">
+    {{range .Stats}}
+    <div class="stat">
+      <dt>{{.Label}}</dt>
+      <dd>{{.Value}}</dd>
+    </div>
+    {{end}}
+  </dl>
+  {{end}}
+</div>
+{{end}}
+{{define "metric_detail.html"}}{{template "layout.html" .}}{{end}}

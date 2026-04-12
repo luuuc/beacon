@@ -1,0 +1,26 @@
+{{define "content"}}
+<h1>{{.Name}}</h1>
+<p class="subtitle">Error detail — {{.Fingerprint}}</p>
+{{if .StackTrace}}
+<div class="stack-trace">
+  <h2>Sample stack trace</h2>
+  <pre>{{.StackTrace}}</pre>
+</div>
+{{end}}
+{{if .Chart}}
+<div class="chart-container">{{.Chart}}</div>
+{{end}}
+<div class="detail-stats">
+  {{if .Stats}}
+  <dl class="stats-grid">
+    {{range .Stats}}
+    <div class="stat">
+      <dt>{{.Label}}</dt>
+      <dd>{{.Value}}</dd>
+    </div>
+    {{end}}
+  </dl>
+  {{end}}
+</div>
+{{end}}
+{{define "error_detail.html"}}{{template "layout.html" .}}{{end}}

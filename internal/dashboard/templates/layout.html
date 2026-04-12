@@ -1,0 +1,30 @@
+{{define "layout.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{if .Title}}{{.Title}} — {{end}}Beacon</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/site.webmanifest">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <nav class="nav">
+    <a href="/" class="nav-logo">
+      <img src="/static/logo.svg" alt="Beacon" width="24" height="24">
+      <span>Beacon</span>
+    </a>
+    <div class="nav-links">
+      <a href="/outcomes" class="nav-link{{if eq .ActiveNav "outcomes"}} active{{end}}">Outcomes</a>
+      <a href="/performance" class="nav-link{{if eq .ActiveNav "performance"}} active{{end}}">Performance</a>
+      <a href="/errors" class="nav-link{{if eq .ActiveNav "errors"}} active{{end}}">Errors</a>
+    </div>
+  </nav>
+  <main class="main">
+    {{template "content" .}}
+  </main>
+</body>
+</html>{{end}}

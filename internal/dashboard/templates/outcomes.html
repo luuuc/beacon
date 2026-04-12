@@ -1,0 +1,21 @@
+{{define "outcomes-cards"}}
+<div id="outcomes-cards" hx-get="/outcomes" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if .Metrics}}
+  <div class="card-grid">
+    {{range .Metrics}}
+    {{template "outcome_card.html" .}}
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No outcome metrics yet.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "content"}}
+<h1>Outcomes</h1>
+<p class="subtitle">Did the feature work?</p>
+{{template "outcomes-cards" .}}
+{{end}}
+{{define "outcomes.html"}}{{template "layout.html" .}}{{end}}

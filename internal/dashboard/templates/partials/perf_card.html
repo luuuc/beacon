@@ -1,0 +1,12 @@
+{{define "perf_card.html"}}
+<a href="/performance/{{.Name}}" class="card">
+  <div class="card-name">{{.Name}}</div>
+  <div class="card-sparkline">{{.Sparkline}}</div>
+  <div class="card-metrics">
+    <span class="card-p95">P95 {{.CurrentP95}}</span>
+    <span class="card-baseline">baseline {{.BaselineP95}}</span>
+    {{if .Drift}}<span class="card-drift {{.DriftClass}}">{{.Drift}}</span>{{end}}
+  </div>
+  <div class="card-volume">{{.Volume}} req</div>
+</a>
+{{end}}

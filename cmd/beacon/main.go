@@ -19,6 +19,7 @@ import (
 	"github.com/luuuc/beacon/internal/adapterfactory"
 	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/config"
+	"github.com/luuuc/beacon/internal/dashboard"
 	"github.com/luuuc/beacon/internal/ingest"
 	"github.com/luuuc/beacon/internal/mcpserver"
 	"github.com/luuuc/beacon/internal/reads"
@@ -162,6 +163,11 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		AuthToken: cfg.Server.Auth.Token,
 	}, adapter, log)
 	readsH.Mount(muxAdapter{srv: srv})
+
+	dash := dashboard.New(dashboard.Config{
+		AuthToken: cfg.Server.Auth.Token,
+	}, readsH, log)
+	dash.Mount(muxAdapter{srv: srv})
 
 	mcpSrv := mcpserver.New(mcpserver.Config{
 		Bind:      cfg.Server.Bind,

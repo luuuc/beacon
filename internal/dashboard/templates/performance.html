@@ -1,0 +1,21 @@
+{{define "performance-cards"}}
+<div id="performance-cards" hx-get="/performance" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if .Endpoints}}
+  <div class="card-grid">
+    {{range .Endpoints}}
+    {{template "perf_card.html" .}}
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No performance data yet.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "content"}}
+<h1>Performance</h1>
+<p class="subtitle">Is anything slowing down?</p>
+{{template "performance-cards" .}}
+{{end}}
+{{define "performance.html"}}{{template "layout.html" .}}{{end}}
