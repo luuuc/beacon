@@ -78,9 +78,9 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 func (h *Handler) Mount(mux interface {
 	Handle(pattern string, handler http.Handler)
 }) {
-	mux.Handle("GET /metrics/{name}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleMetric)))
-	mux.Handle("GET /errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
-	mux.Handle("GET /perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
+	mux.Handle("GET /api/metrics/{name}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleMetric)))
+	mux.Handle("GET /api/errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
+	mux.Handle("GET /api/perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ type GetPerfRequest struct {
 // GetMetric
 // ---------------------------------------------------------------------------
 
-// GetMetric is the shared query path for GET /metrics/{name} and the MCP
+// GetMetric is the shared query path for GET /api/metrics/{name} and the MCP
 // beacon.metric tool.
 func (h *Handler) GetMetric(ctx context.Context, req GetMetricRequest) (*MetricResponse, error) {
 	if !req.Kind.Valid() {
@@ -374,7 +374,7 @@ func (h *Handler) buildBaselineSummary(ctx context.Context, kind beacondb.Kind, 
 // GetErrors
 // ---------------------------------------------------------------------------
 
-// GetErrors is the shared query path for GET /errors and the MCP
+// GetErrors is the shared query path for GET /api/errors and the MCP
 // beacon.errors tool.
 func (h *Handler) GetErrors(ctx context.Context, req GetErrorsRequest) (*ErrorsResponse, error) {
 	if req.Since == 0 {
@@ -474,7 +474,7 @@ func (h *Handler) handleErrors(w http.ResponseWriter, r *http.Request) {
 // GetPerfEndpoints
 // ---------------------------------------------------------------------------
 
-// GetPerfEndpoints is the shared query path for GET /perf/endpoints and the
+// GetPerfEndpoints is the shared query path for GET /api/perf/endpoints and the
 // MCP beacon.perf_drift tool.
 func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*PerfResponse, error) {
 	if req.Window == 0 {

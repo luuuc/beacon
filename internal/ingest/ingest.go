@@ -1,4 +1,4 @@
-// Package ingest is Beacon's HTTP write path: POST /events.
+// Package ingest is Beacon's HTTP write path: POST /api/events.
 //
 // Responsibilities:
 //
@@ -11,7 +11,7 @@
 //   - 10-minute idempotency ring via Idempotency-Key
 //   - Delegates the final write to a beacondb.Adapter
 //
-// Error response matrix: 202/400/401/413/429 per doc/definition/06-http-api.md.
+// Error response matrix: 202/400/401/413/429 per .doc/definition/06-http-api.md.
 // A storage-side failure maps to 503 (not in the spec matrix, but the honest
 // answer for "we validated you fine, we just can't talk to the DB").
 package ingest
@@ -62,7 +62,7 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// Handler is the POST /events HTTP handler. It implements http.Handler.
+// Handler is the POST /api/events HTTP handler. It implements http.Handler.
 type Handler struct {
 	cfg     Config
 	adapter beacondb.Adapter
@@ -93,7 +93,7 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// ServeMux's method-prefixed pattern ("POST /events") takes care of
+	// ServeMux's method-prefixed pattern ("POST /api/events") takes care of
 	// method filtering; we just handle POST.
 
 	if h.cfg.AuthToken != "" && !checkBearer(r.Header.Get("Authorization"), h.cfg.AuthToken) {

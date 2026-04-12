@@ -37,7 +37,7 @@ func makeBatch(events ...map[string]any) *bytes.Buffer {
 
 func doPost(t *testing.T, h *Handler, body *bytes.Buffer, mutate func(*http.Request)) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/events", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/events", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "10.0.0.1:12345"
 	if mutate != nil {
@@ -516,7 +516,7 @@ func TestClientIP(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/events", nil)
+			req := httptest.NewRequest(http.MethodPost, "/api/events", nil)
 			req.RemoteAddr = tc.remote
 			if tc.mutate != nil {
 				tc.mutate(req)

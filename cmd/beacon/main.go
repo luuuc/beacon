@@ -156,7 +156,7 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		TrustXFF:        cfg.Ingest.TrustXFF,
 		IdempMaxEntries: cfg.Ingest.IdempMaxEntries,
 	}, adapter, log)
-	srv.Mount("POST /events", ingestH)
+	srv.Mount("POST /api/events", ingestH)
 
 	readsH := reads.NewHandler(reads.Config{
 		AuthToken: cfg.Server.Auth.Token,

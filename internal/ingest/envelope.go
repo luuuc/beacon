@@ -32,7 +32,7 @@ const (
 	LateArrivingThreshold = 24 * time.Hour
 )
 
-// batchRequest is the POST /events body shape.
+// batchRequest is the POST /api/events body shape.
 type batchRequest struct {
 	Events []envelopeJSON `json:"events"`
 }

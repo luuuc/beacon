@@ -44,8 +44,8 @@ func New(cfg *config.Config, checks ReadyChecks, log *slog.Logger) *Server {
 	}
 	s := &Server{cfg: cfg, checks: checks, log: log, mux: http.NewServeMux()}
 
-	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/readyz", s.handleReadyz)
+	s.mux.HandleFunc("/api/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/api/readyz", s.handleReadyz)
 
 	if cfg.Server.PprofEnabled {
 		s.mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -69,7 +69,7 @@ func (s *Server) Handler() http.Handler { return s.mux }
 // Mount registers an additional handler on the server's mux. Must be called
 // before Run — http.ServeMux is not safe for concurrent mutation once the
 // server has started serving. `pattern` follows Go 1.22's method-prefixed
-// form (e.g. "POST /events").
+// form (e.g. "POST /api/events").
 func (s *Server) Mount(pattern string, h http.Handler) {
 	s.mux.Handle(pattern, h)
 }
