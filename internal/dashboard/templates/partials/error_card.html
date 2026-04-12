@@ -1,0 +1,14 @@
+{{define "error_card.html"}}
+<a href="/errors/{{.Fingerprint}}" class="card">
+  <div class="card-header">
+    <span class="card-name">{{.Name}}</span>
+    {{if .IsNew}}<span class="badge badge-new">NEW</span>{{end}}
+  </div>
+  <div class="card-frame">{{.FirstAppFrame}}</div>
+  <div class="card-sparkline">{{.Sparkline}}</div>
+  <div class="card-metrics">
+    <span class="card-count">{{.Count}} occurrences</span>
+    <span class="card-last-seen">Last seen {{.LastSeen}}</span>
+  </div>
+</a>
+{{end}}

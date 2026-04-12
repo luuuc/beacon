@@ -1,0 +1,21 @@
+{{define "errors-cards"}}
+<div id="errors-cards" hx-get="/errors" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if .Errors}}
+  <div class="card-grid">
+    {{range .Errors}}
+    {{template "error_card.html" .}}
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No errors. All quiet.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "content"}}
+<h1>Errors</h1>
+<p class="subtitle">Is anything breaking?</p>
+{{template "errors-cards" .}}
+{{end}}
+{{define "errors.html"}}{{template "layout.html" .}}{{end}}

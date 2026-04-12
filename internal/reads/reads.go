@@ -78,9 +78,9 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 func (h *Handler) Mount(mux interface {
 	Handle(pattern string, handler http.Handler)
 }) {
-	mux.Handle("GET /metrics/{name}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleMetric)))
-	mux.Handle("GET /errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
-	mux.Handle("GET /perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
+	mux.Handle("GET /api/metrics/{name}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleMetric)))
+	mux.Handle("GET /api/errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
+	mux.Handle("GET /api/perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ type GetPerfRequest struct {
 // GetMetric
 // ---------------------------------------------------------------------------
 
-// GetMetric is the shared query path for GET /metrics/{name} and the MCP
+// GetMetric is the shared query path for GET /api/metrics/{name} and the MCP
 // beacon.metric tool.
 func (h *Handler) GetMetric(ctx context.Context, req GetMetricRequest) (*MetricResponse, error) {
 	if !req.Kind.Valid() {
@@ -374,7 +374,7 @@ func (h *Handler) buildBaselineSummary(ctx context.Context, kind beacondb.Kind, 
 // GetErrors
 // ---------------------------------------------------------------------------
 
-// GetErrors is the shared query path for GET /errors and the MCP
+// GetErrors is the shared query path for GET /api/errors and the MCP
 // beacon.errors tool.
 func (h *Handler) GetErrors(ctx context.Context, req GetErrorsRequest) (*ErrorsResponse, error) {
 	if req.Since == 0 {
@@ -474,7 +474,7 @@ func (h *Handler) handleErrors(w http.ResponseWriter, r *http.Request) {
 // GetPerfEndpoints
 // ---------------------------------------------------------------------------
 
-// GetPerfEndpoints is the shared query path for GET /perf/endpoints and the
+// GetPerfEndpoints is the shared query path for GET /api/perf/endpoints and the
 // MCP beacon.perf_drift tool.
 func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*PerfResponse, error) {
 	if req.Window == 0 {
@@ -605,6 +605,100 @@ func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, nam
 		P95:        latest.P95,
 		P99:        latest.P99,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetRecentErrorEvents (dashboard)
+// ---------------------------------------------------------------------------
+
+// GetRecentErrorEvents returns the N most recent raw error events matching
+// the given fingerprint. Used by the dashboard error detail page for sample
+// stack traces.
+func (h *Handler) GetRecentErrorEvents(ctx context.Context, fingerprint string, limit int) ([]beacondb.Event, error) {
+	if fingerprint == "" || limit <= 0 {
+		return nil, nil
+	}
+	events, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:        beacondb.KindError,
+		Fingerprint: fingerprint,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list error events: %w", err)
+	}
+	return events, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetOutcomeSummaries (dashboard)
+// ---------------------------------------------------------------------------
+
+// OutcomeSummary is one outcome metric's recent activity and baseline drift.
+type OutcomeSummary struct {
+	Name           string    `json:"name"`
+	DailyCount     int64     `json:"daily_count"`
+	HourlyCounts   []float64 `json:"-"` // raw hourly series for sparklines
+	DriftPercent   float64   `json:"drift_percent"`   // vs 30d baseline mean
+	BaselineMean   float64   `json:"baseline_mean"`
+}
+
+// GetOutcomeSummaries lists all outcome metrics active in the window,
+// each with its current daily count, sparkline series, and drift from
+// the 30-day baseline. Results are sorted by absolute drift descending.
+func (h *Handler) GetOutcomeSummaries(ctx context.Context, window time.Duration) ([]OutcomeSummary, error) {
+	if window == 0 {
+		window = 7 * 24 * time.Hour
+	}
+	now := h.now().UTC()
+	since := now.Add(-window)
+
+	hourlies, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
+		Kind:       beacondb.KindOutcome,
+		PeriodKind: beacondb.PeriodHour,
+		Since:      since,
+		Until:      now.Add(time.Hour),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list outcome metrics: %w", err)
+	}
+
+	type acc struct {
+		total   int64
+		hourly  []float64
+	}
+	byName := map[string]*acc{}
+	for _, m := range hourlies {
+		a, ok := byName[m.Name]
+		if !ok {
+			a = &acc{}
+			byName[m.Name] = a
+		}
+		a.total += m.Count
+		a.hourly = append(a.hourly, float64(m.Count))
+	}
+
+	out := make([]OutcomeSummary, 0, len(byName))
+	for name, a := range byName {
+		baseline, _ := h.buildBaselineSummary(ctx, beacondb.KindOutcome, name, now)
+		var drift float64
+		var bMean float64
+		if baseline != nil && baseline.HourlyCountMean > 0 {
+			bMean = baseline.HourlyCountMean
+			currentMean := mean(a.hourly)
+			drift = ((currentMean - bMean) / bMean) * 100
+		}
+		out = append(out, OutcomeSummary{
+			Name:         name,
+			DailyCount:   a.total,
+			HourlyCounts: a.hourly,
+			DriftPercent: roundTo(drift, 1),
+			BaselineMean: roundTo(bMean, 2),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return math.Abs(out[i].DriftPercent) > math.Abs(out[j].DriftPercent)
+	})
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

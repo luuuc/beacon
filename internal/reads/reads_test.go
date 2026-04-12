@@ -49,7 +49,7 @@ func seedMetric(t *testing.T, fake *memfake.Fake, m beacondb.Metric) {
 func fp(v float64) *float64 { return &v }
 
 // ---------------------------------------------------------------------------
-// GET /metrics/{name}
+// GET /api/metrics/{name}
 // ---------------------------------------------------------------------------
 
 func TestMetric_foldsHourliesIntoDays(t *testing.T) {
@@ -75,7 +75,7 @@ func TestMetric_foldsHourliesIntoDays(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics/signup.completed?kind=outcome&period_kind=day&window=7d", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics/signup.completed?kind=outcome&period_kind=day&window=7d", nil)
 	mux(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -111,7 +111,7 @@ func TestMetric_hourPeriodKindPassthrough(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics/perf.dashboard?kind=perf&period_kind=hour&window=6h", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics/perf.dashboard?kind=perf&period_kind=hour&window=6h", nil)
 	mux(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body=%s", rec.Code, rec.Body.String())
@@ -138,9 +138,9 @@ func TestMetric_badParams(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/metrics/x?kind=banana", "kind must be outcome"},
-		{"/metrics/x?kind=outcome&window=bogus", "window:"},
-		{"/metrics/x?kind=outcome&period_kind=week", "period_kind must be hour or day"},
+		{"/api/metrics/x?kind=banana", "kind must be outcome"},
+		{"/api/metrics/x?kind=outcome&window=bogus", "window:"},
+		{"/api/metrics/x?kind=outcome&period_kind=week", "period_kind must be hour or day"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestMetric_baselineSummary(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics/signup.completed?kind=outcome&period_kind=day&window=7d", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics/signup.completed?kind=outcome&period_kind=day&window=7d", nil)
 	mux(h).ServeHTTP(rec, req)
 
 	var resp MetricResponse
@@ -205,7 +205,7 @@ func TestMetric_baselineSummary(t *testing.T) {
 func TestMetric_unauthorized(t *testing.T) {
 	h, _ := newTestHandler(t, Config{AuthToken: "secret"})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics/x?kind=outcome", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics/x?kind=outcome", nil)
 	mux(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("code = %d", rec.Code)
@@ -213,7 +213,7 @@ func TestMetric_unauthorized(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /errors
+// GET /api/errors
 // ---------------------------------------------------------------------------
 
 func TestErrors_groupsByFingerprint(t *testing.T) {
@@ -226,7 +226,7 @@ func TestErrors_groupsByFingerprint(t *testing.T) {
 	seedMetric(t, fake, beacondb.Metric{Kind: beacondb.KindError, Name: "ValueError", Fingerprint: "fp-B", PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour", PeriodStart: h1, Count: 1})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/errors?since=7d", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/errors?since=7d", nil)
 	mux(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body=%s", rec.Code, rec.Body.String())
@@ -278,7 +278,7 @@ func TestErrors_newOnly(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/errors?since=7d&new_only=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/errors?since=7d&new_only=true", nil)
 	mux(h).ServeHTTP(rec, req)
 
 	var resp ErrorsResponse
@@ -292,7 +292,7 @@ func TestErrors_newOnly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /perf/endpoints
+// GET /api/perf/endpoints
 // ---------------------------------------------------------------------------
 
 func TestPerfEndpoints_driftOrdering(t *testing.T) {
@@ -327,7 +327,7 @@ func TestPerfEndpoints_driftOrdering(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/perf/endpoints?window=24h", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/perf/endpoints?window=24h", nil)
 	mux(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body=%s", rec.Code, rec.Body.String())
@@ -358,7 +358,7 @@ func TestPerfEndpoints_driftFilter(t *testing.T) {
 		})
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/perf/endpoints?window=24h&drift=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/perf/endpoints?window=24h&drift=true", nil)
 	mux(h).ServeHTTP(rec, req)
 
 	var resp PerfResponse
@@ -399,6 +399,88 @@ func TestParseWindow(t *testing.T) {
 				t.Errorf("got (%v, %v), want (%v, nil)", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetOutcomeSummaries
+// ---------------------------------------------------------------------------
+
+func TestOutcomeSummaries_driftOrdering(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	// Seed two outcome metrics with different baseline profiles.
+	// "steady" has a flat baseline matching current → ~0% drift.
+	// "spiked" has a low baseline but high recent counts → large drift.
+	base := fixedNow.Add(-30 * 24 * time.Hour).Truncate(time.Hour)
+
+	// Baseline period (30d): steady=10/hr, spiked=5/hr
+	for i := 0; i < 200; i++ {
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "steady",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		})
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "spiked",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       5,
+		})
+	}
+
+	// Recent window (last 24h): steady stays 10/hr, spiked jumps to 50/hr.
+	recent := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 24; i++ {
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "steady",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: recent.Add(time.Duration(i) * time.Hour),
+			Count:       10,
+		})
+		seedMetric(t, fake, beacondb.Metric{
+			Kind: beacondb.KindOutcome, Name: "spiked",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: recent.Add(time.Duration(i) * time.Hour),
+			Count:       50,
+		})
+	}
+
+	summaries, err := h.GetOutcomeSummaries(context.Background(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("GetOutcomeSummaries: %v", err)
+	}
+	if len(summaries) < 2 {
+		t.Fatalf("got %d summaries, want >= 2", len(summaries))
+	}
+
+	// "spiked" should be first — it has the largest absolute drift.
+	if summaries[0].Name != "spiked" {
+		t.Errorf("first summary = %q, want spiked (highest drift)", summaries[0].Name)
+	}
+	if summaries[0].DriftPercent <= 0 {
+		t.Errorf("spiked drift = %.1f%%, want positive", summaries[0].DriftPercent)
+	}
+
+	// "steady" should have near-zero drift.
+	var steady *OutcomeSummary
+	for i := range summaries {
+		if summaries[i].Name == "steady" {
+			steady = &summaries[i]
+			break
+		}
+	}
+	if steady == nil {
+		t.Fatal("steady not found in summaries")
+	}
+	if steady.DriftPercent > 5 || steady.DriftPercent < -5 {
+		t.Errorf("steady drift = %.1f%%, want near zero", steady.DriftPercent)
+	}
+
+	// HourlyCounts should be populated for sparklines.
+	if len(summaries[0].HourlyCounts) == 0 {
+		t.Error("spiked HourlyCounts is empty")
 	}
 }
 

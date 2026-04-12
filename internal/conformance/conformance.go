@@ -1,5 +1,5 @@
 // Package conformance holds reference implementations of the cross-client
-// algorithms defined in doc/definition/06-http-api.md (Fingerprint, path
+// algorithms defined in .doc/definition/06-http-api.md (Fingerprint, path
 // normalization) and the loader for spec/fixtures.json.
 //
 // Every language client ships the same algorithms and asserts them against

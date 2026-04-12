@@ -1,7 +1,7 @@
 require "digest/sha1"
 
 module Beacon
-  # Fingerprint algorithm — normative, see doc/definition/06-http-api.md.
+  # Fingerprint algorithm — normative, see .doc/definition/06-http-api.md.
   #   SHA1("<exception_class>|<first_app_frame_path>")
   # Line numbers are intentionally excluded so cosmetic edits above the
   # failing line don't shatter grouping across deploys.

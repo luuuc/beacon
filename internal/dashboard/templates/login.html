@@ -1,0 +1,22 @@
+{{define "login.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Beacon</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <form method="POST" action="/login" class="login-form">
+    <img src="/static/logo.svg" alt="Beacon" width="48" height="48" class="login-logo">
+    <h1>Beacon</h1>
+    {{if .Error}}<p class="login-error">{{.Error}}</p>{{end}}
+    <label for="token">Token</label>
+    <input type="password" id="token" name="token" required autofocus placeholder="BEACON_AUTH_TOKEN">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>{{end}}

@@ -47,7 +47,7 @@ func (k Kind) Valid() bool {
 // For a regular rollup, PeriodKind and Metric.PeriodWindow match
 // ("hour"/"day"/"week"). For a baseline row, PeriodKind is "baseline" and
 // PeriodWindow encodes the trailing window ("24h", "7d", "30d"). See
-// doc/definition/03-data-model.md for the rationale.
+// .doc/definition/03-data-model.md for the rationale.
 type PeriodKind string
 
 const (

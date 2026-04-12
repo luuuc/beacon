@@ -212,7 +212,7 @@ rollup:
 }
 
 func waitForHealth(port int, timeout time.Duration) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/healthz", port)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url)
@@ -231,7 +231,7 @@ func waitForHealth(port int, timeout time.Duration) error {
 // successful 2xx posts and the first error (if any).
 func generateLoad(cfg config) (int, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := fmt.Sprintf("http://127.0.0.1:%d/events", cfg.BeaconPort)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/events", cfg.BeaconPort)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration)
 	defer cancel()

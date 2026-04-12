@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, checks ReadyChecks, pprofOn bool) *Server {
 
 func TestHealthz(t *testing.T) {
 	s := newTestServer(t, ReadyChecks{}, false)
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -54,7 +54,7 @@ func TestReadyzAllOK(t *testing.T) {
 	}, false)
 
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("readyz = %d, want 200. body=%s", rec.Code, rec.Body.String())
 	}
@@ -181,7 +181,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 func doReadyz(t *testing.T, s *Server) readyResult {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/readyz", nil))
 	if rec.Code != http.StatusServiceUnavailable && rec.Code != http.StatusOK {
 		t.Fatalf("readyz unexpected code %d", rec.Code)
 	}

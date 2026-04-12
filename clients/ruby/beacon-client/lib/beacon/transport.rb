@@ -48,7 +48,7 @@ module Beacon
 
       def initialize(config)
         @config      = config
-        @uri         = URI.parse("#{config.endpoint.to_s.chomp("/")}/events")
+        @uri         = URI.parse("#{config.endpoint.to_s.chomp("/")}/api/events")
         @mutex       = Mutex.new
         @http        = nil
         @user_agent  = "beacon-client/#{Beacon::VERSION} (ruby #{RUBY_VERSION})".freeze

@@ -4,7 +4,7 @@ require "securerandom"
 module Beacon
   # Background flusher: drains the bounded queue, builds a JSON batch, and
   # POSTs it through the transport. Implements the retry, circuit breaker,
-  # and Idempotency-Key behavior from doc/definition/05-clients.md.
+  # and Idempotency-Key behavior from .doc/definition/05-clients.md.
   #
   # The flusher is rescue-all. Its loop crashing is itself an event we log
   # but never re-raise — the host's request cycle keeps running.

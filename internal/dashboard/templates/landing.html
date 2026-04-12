@@ -1,0 +1,24 @@
+{{define "content"}}
+<h1>Dashboard</h1>
+<p class="subtitle">Is anything weird right now?</p>
+<div class="landing-cards">
+  {{if .Cards}}
+    {{range .Cards}}
+    <a href="{{.Link}}" class="card landing-card">
+      <div class="card-label">{{.Label}}</div>
+      <div class="card-headline">{{.Headline}}</div>
+      {{if .Sparkline}}
+      <div class="card-sparkline">{{.Sparkline}}</div>
+      {{end}}
+      <div class="card-detail">{{.Detail}}</div>
+      <div class="card-action">View all →</div>
+    </a>
+    {{end}}
+  {{else}}
+    <div class="empty-state">
+      <p>No data yet. Start sending events to see your dashboard.</p>
+    </div>
+  {{end}}
+</div>
+{{end}}
+{{define "landing.html"}}{{template "layout.html" .}}{{end}}

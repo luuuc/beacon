@@ -1,6 +1,6 @@
 // Package rollup is Beacon's background aggregation worker.
 //
-// Design choices (see doc/definition/02-architecture.md and 03-data-model.md):
+// Design choices (see .doc/definition/02-architecture.md and 03-data-model.md):
 //
 //   - No cursor table. Every tick re-derives rollups from raw events over a
 //     bounded window. Missing a tick is harmless: the next one catches up.

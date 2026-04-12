@@ -1,5 +1,5 @@
 module Beacon
-  # Path normalization fallback — normative, see doc/definition/06-http-api.md.
+  # Path normalization fallback — normative, see .doc/definition/06-http-api.md.
   #
   # Used when the host framework does not expose a route template. Rails apps
   # should set env["beacon.route_template"] from the routes layer; everything

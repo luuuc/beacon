@@ -1,7 +1,7 @@
 {
   "$schema": "beacon-fixtures-v1",
   "description": "Canonical cross-client fixtures for Beacon. Loaded by the Go server's conformance tests and by every client (starting with beacon-client / Ruby) in CI. If a client disagrees with a fixture, the client is wrong.",
-  "source_of_truth": "doc/definition/06-http-api.md",
+  "source_of_truth": ".doc/definition/06-http-api.md",
 
   "fingerprint": {
     "description": "Fingerprint algorithm: SHA1(exception_class + '|' + first_app_frame_path). Line numbers and method names are excluded — only the file path. Output is lowercase hex.",
@@ -141,7 +141,11 @@
           "actor_type": "User",
           "actor_id": "019245ab-d36e-7000-8000-000000000001",
           "properties": { "plan": "pro" },
-          "context": { "request_id": "abc-123", "deploy_sha": "9f3a2c1", "environment": "production" }
+          "context": {
+            "request_id": "abc-123",
+            "deploy_sha": "9f3a2c1",
+            "environment": "production"
+          }
         }
       },
       {

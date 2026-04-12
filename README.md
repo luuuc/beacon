@@ -27,7 +27,7 @@ All three pillars live in the same database, read by the same HTTP API, queryabl
 ## Architecture in one diagram
 
 ```
-┌────────────────┐    HTTP POST /events    ┌──────────────────┐
+┌────────────────┐   HTTP POST /api/events  ┌──────────────────┐
 │  Your app      │ ──────────────────────▶ │  beacon (Go)     │
 │  beacon-client │                         │  ingest + rollup │
 │  (Ruby gem)    │                         │  + MCP server    │

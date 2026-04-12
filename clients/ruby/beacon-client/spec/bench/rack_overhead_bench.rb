@@ -4,7 +4,7 @@
 # the middleware does, and it stays red until the middleware lands and is
 # fast enough.
 #
-# Contract (from doc/definition/05-clients.md):
+# Contract (from .doc/definition/05-clients.md):
 #
 #   "Target overhead: under 50µs added to P95 request latency on a reference
 #    Rack endpoint."
