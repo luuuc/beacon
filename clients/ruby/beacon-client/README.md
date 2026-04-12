@@ -100,7 +100,7 @@ Beacon.flush  # synchronous, drains the queue (rake tasks, shutdown)
 - **Fork-safe** — re-spawns the flusher in clustered Puma/Unicorn workers
 - **Idempotency keys** on every retry so safe retries never double-count
 
-See `doc/definition/05-clients.md` and `doc/definition/07-writing-a-client.md`
+See `.doc/definition/05-clients.md` and `.doc/definition/07-writing-a-client.md`
 in the Beacon repo for the full contract.
 
 ## Development

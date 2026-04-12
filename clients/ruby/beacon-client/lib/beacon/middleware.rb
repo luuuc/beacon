@@ -4,7 +4,7 @@ require "beacon/lru"
 module Beacon
   # Rack middleware that captures perf and errors on the host's hot path.
   #
-  # Hot-path discipline (see doc/definition/05-clients.md):
+  # Hot-path discipline (see .doc/definition/05-clients.md):
   #   - capture monotonic start
   #   - call the app
   #   - build a small Hash event

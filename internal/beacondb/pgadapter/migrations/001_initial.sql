@@ -1,6 +1,6 @@
 -- 001 — initial schema.
 --
--- Divergence from doc/definition/03-data-model.md: fingerprint is NOT NULL
+-- Divergence from .doc/definition/03-data-model.md: fingerprint is NOT NULL
 -- DEFAULT '' on both tables (not nullable) because the beacon_metrics unique
 -- index is a plain column list, and PostgreSQL's traditional "NULLs are
 -- distinct" rule would let multiple rows with NULL fingerprint share a key
