@@ -160,6 +160,135 @@ func TestAggregate_errorKeyedByFingerprint(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-dimension rollup
+// ---------------------------------------------------------------------------
+
+func TestAggregate_perDimensionRollup(t *testing.T) {
+	w, fake := newTestWorker(t, fixedNow)
+	hour := fixedNow.Truncate(time.Hour)
+
+	seedEvents(t, fake,
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "http_request", Dimensions: map[string]any{"country": "US"}, CreatedAt: hour.Add(1 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "http_request", Dimensions: map[string]any{"country": "US"}, CreatedAt: hour.Add(2 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "http_request", Dimensions: map[string]any{"country": "DE"}, CreatedAt: hour.Add(3 * time.Minute)},
+	)
+
+	if err := w.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		Kind: beacondb.KindAmbient, Name: "http_request", PeriodKind: beacondb.PeriodHour,
+	})
+
+	// Expect 3 rows: undimensioned aggregate (count=3), US slice (count=2), DE slice (count=1).
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (aggregate + US + DE)", len(rows))
+	}
+
+	byHash := map[string]beacondb.Metric{}
+	for _, r := range rows {
+		byHash[r.DimensionHash] = r
+	}
+
+	// Undimensioned aggregate.
+	agg, ok := byHash[""]
+	if !ok {
+		t.Fatal("missing undimensioned aggregate row")
+	}
+	if agg.Count != 3 {
+		t.Errorf("aggregate count = %d, want 3", agg.Count)
+	}
+
+	// Per-country slices.
+	usHash, _ := beacondb.DimensionHash(map[string]any{"country": "US"})
+	deHash, _ := beacondb.DimensionHash(map[string]any{"country": "DE"})
+	if us, ok := byHash[usHash]; !ok {
+		t.Error("missing US dimension row")
+	} else {
+		if us.Count != 2 {
+			t.Errorf("US count = %d, want 2", us.Count)
+		}
+		if us.Dimensions["country"] != "US" {
+			t.Errorf("US dimensions = %+v, want {country: US}", us.Dimensions)
+		}
+	}
+	if de, ok := byHash[deHash]; !ok {
+		t.Error("missing DE dimension row")
+	} else {
+		if de.Count != 1 {
+			t.Errorf("DE count = %d, want 1", de.Count)
+		}
+		if de.Dimensions["country"] != "DE" {
+			t.Errorf("DE dimensions = %+v, want {country: DE}", de.Dimensions)
+		}
+	}
+}
+
+func TestAggregate_noDimensionsProducesUndimensionedOnly(t *testing.T) {
+	w, fake := newTestWorker(t, fixedNow)
+	hour := fixedNow.Truncate(time.Hour)
+
+	seedEvents(t, fake,
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "job_lifecycle", CreatedAt: hour.Add(1 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "job_lifecycle", CreatedAt: hour.Add(2 * time.Minute)},
+	)
+
+	if err := w.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		Kind: beacondb.KindAmbient, Name: "job_lifecycle", PeriodKind: beacondb.PeriodHour,
+	})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (undimensioned only)", len(rows))
+	}
+	if rows[0].Count != 2 {
+		t.Errorf("count = %d, want 2", rows[0].Count)
+	}
+	if rows[0].DimensionHash != "" {
+		t.Errorf("dimension_hash = %q, want empty", rows[0].DimensionHash)
+	}
+}
+
+func TestAggregate_perfWithDimensions(t *testing.T) {
+	// Enrichment applies to perf events too, not just ambient.
+	w, fake := newTestWorker(t, fixedNow)
+	hour := fixedNow.Truncate(time.Hour)
+
+	seedEvents(t, fake,
+		beacondb.Event{Kind: beacondb.KindPerf, Name: "GET /", DurationMs: dur(100), Dimensions: map[string]any{"country": "US"}, CreatedAt: hour.Add(1 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindPerf, Name: "GET /", DurationMs: dur(200), Dimensions: map[string]any{"country": "DE"}, CreatedAt: hour.Add(2 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindPerf, Name: "GET /", DurationMs: dur(150), CreatedAt: hour.Add(3 * time.Minute)},
+	)
+
+	if err := w.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		Kind: beacondb.KindPerf, Name: "GET /", PeriodKind: beacondb.PeriodHour,
+	})
+	// 3 rows: undimensioned (count=3), US (count=1), DE (count=1).
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+
+	byHash := map[string]beacondb.Metric{}
+	for _, r := range rows {
+		byHash[r.DimensionHash] = r
+	}
+	agg := byHash[""]
+	if agg.Count != 3 {
+		t.Errorf("aggregate count = %d, want 3", agg.Count)
+	}
+	if agg.P50 == nil || agg.Sum == nil {
+		t.Error("aggregate should have duration stats")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Idempotence + late-arriving
 // ---------------------------------------------------------------------------
 

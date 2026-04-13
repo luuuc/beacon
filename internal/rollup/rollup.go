@@ -232,35 +232,66 @@ func (w *Worker) aggregateHour(ctx context.Context, hour time.Time) error {
 	}
 
 	type bucketKey struct {
-		kind        beacondb.Kind
-		name        string
-		fingerprint string
+		kind          beacondb.Kind
+		name          string
+		fingerprint   string
+		dimensionHash string
 	}
-	buckets := map[bucketKey][]beacondb.Event{}
+
+	type bucket struct {
+		events     []beacondb.Event
+		dimensions map[string]any
+	}
+
+	buckets := map[bucketKey]*bucket{}
+
+	addToBucket := func(bk bucketKey, e beacondb.Event, dims map[string]any) {
+		b, ok := buckets[bk]
+		if !ok {
+			b = &bucket{dimensions: dims}
+			buckets[bk] = b
+		}
+		b.events = append(b.events, e)
+	}
+
 	for _, e := range events {
 		bk := bucketKey{kind: e.Kind, name: e.Name}
 		if e.Kind == beacondb.KindError {
 			bk.fingerprint = e.Fingerprint
 		}
-		buckets[bk] = append(buckets[bk], e)
+		// Undimensioned aggregate (always produced).
+		addToBucket(bk, e, nil)
+
+		// Per-dimension slice (only when event carries dimensions).
+		if len(e.Dimensions) > 0 {
+			if dh, err := beacondb.DimensionHash(e.Dimensions); err != nil {
+				w.log.Warn("dimension hash failed; skipping dimensioned rollup",
+					"name", e.Name, "err", err)
+			} else {
+				dimBK := bk
+				dimBK.dimensionHash = dh
+				addToBucket(dimBK, e, e.Dimensions)
+			}
+		}
 	}
 
 	metrics := make([]beacondb.Metric, 0, len(buckets))
-	for bk, evs := range buckets {
+	for bk, b := range buckets {
 		m := beacondb.Metric{
 			Kind:          bk.kind,
 			Name:          bk.name,
 			PeriodKind:    beacondb.PeriodHour,
 			PeriodWindow:  "hour",
 			PeriodStart:   hour,
-			Count:         int64(len(evs)),
+			Count:         int64(len(b.events)),
 			Fingerprint:   bk.fingerprint,
-			DimensionHash: "", // v1 has no dimension rollups; card for that is separate.
+			Dimensions:    b.dimensions,
+			DimensionHash: bk.dimensionHash,
 		}
 
-		durations := make([]float64, 0, len(evs))
+		durations := make([]float64, 0, len(b.events))
 		var sum float64
-		for _, e := range evs {
+		for _, e := range b.events {
 			if e.DurationMs != nil {
 				d := float64(*e.DurationMs)
 				durations = append(durations, d)
