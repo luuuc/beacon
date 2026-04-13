@@ -127,12 +127,26 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		log.Warn("rollup.timezone unknown; falling back to UTC", "value", cfg.Rollup.Timezone, "err", err)
 		tz = time.UTC
 	}
+	baselineWin, err := config.ParseBeaconDuration(cfg.Ambient.Anomaly.BaselineWindow)
+	if err != nil {
+		log.Warn("ambient.anomaly.baseline_window invalid; using default", "value", cfg.Ambient.Anomaly.BaselineWindow, "err", err)
+	}
+	detectionWin, err := config.ParseBeaconDuration(cfg.Ambient.Anomaly.DetectionWindow)
+	if err != nil {
+		log.Warn("ambient.anomaly.detection_window invalid; using default", "value", cfg.Ambient.Anomaly.DetectionWindow, "err", err)
+	}
 	worker := rollup.NewWorker(rollup.Config{
 		TickInterval:     time.Duration(cfg.Rollup.TickSeconds) * time.Second,
 		RetentionRaw:     time.Duration(cfg.Retention.EventsDays) * 24 * time.Hour,
 		AmbientRetention: time.Duration(cfg.Retention.AmbientRetentionHours) * time.Hour,
 		PruneAt:          cfg.Rollup.PruneAt,
 		Timezone:         tz,
+		Anomaly: rollup.AnomalyConfig{
+			BaselineWindow:  baselineWin,
+			DetectionWindow: detectionWin,
+			SigmaThreshold:  cfg.Ambient.Anomaly.SigmaThreshold,
+			MinVolume:       int64(cfg.Ambient.Anomaly.MinVolume),
+		},
 	}, adapter, log)
 
 	log.Info("beacon starting",
