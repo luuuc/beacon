@@ -49,6 +49,8 @@ module Beacon
       @enabled        = config.enabled?
       @capture_perf   = config.pillar?(:perf)
       @capture_errors = config.pillar?(:errors)
+      @enrich_block   = config.enrich_context
+      @enrich_warned  = false
 
       # Pre-built shared context. Frozen so the same Hash is referenced from
       # every event without per-request allocation.
@@ -106,13 +108,8 @@ module Beacon
       method      = env["REQUEST_METHOD"] || "GET"
       template    = env["beacon.route_template"]
       path        = env["PATH_INFO"] || "/"
-      # `template` is already in "<METHOD> <path-template>" shape per
-      # spec/fixtures.json's cross-client contract (see the Railtie's
-      # start_processing.action_controller subscriber), so we use it
-      # verbatim. Pre-v0.2.2 this branch prepended method again,
-      # producing "GET GET /users/:id" in every perf rollup when the
-      # Railtie integration was loaded.
       name        = template || cached_name(method, path)
+      dims        = enrich_dimensions(env)
 
       @sink << {
         kind: :perf,
@@ -120,6 +117,7 @@ module Beacon
         created_at_ns: realtime_ns,
         properties: { duration_ms: duration_ms, status: status },
         context: @base_context,
+        dimensions: dims,
       }
       nil
     rescue => e
@@ -131,6 +129,7 @@ module Beacon
       frame       = first_app_frame(exception)
       fingerprint = Fingerprint.compute(exception.class.name, frame || "")
       send_full   = should_send_full_stack?(fingerprint)
+      dims        = enrich_dimensions(env)
 
       properties = {
         fingerprint:     fingerprint,
@@ -148,10 +147,30 @@ module Beacon
         created_at_ns: realtime_ns,
         properties: properties,
         context: @base_context,
+        dimensions: dims,
       }
       nil
     rescue => e
       log_rescue(e)
+      nil
+    end
+
+    # Call the enrichment block safely. Returns a Hash of dimensions or nil.
+    # On exception: logs a warning once and returns nil. The block continues
+    # to be called on subsequent requests (a transient error like a missing
+    # Warden user on a health-check should not permanently disable enrichment).
+    # Design invariant: enrichment failures never affect the host app.
+    def enrich_dimensions(env)
+      return nil unless @enrich_block
+      request = Rack::Request.new(env) if defined?(Rack::Request)
+      request ||= env
+      result = @enrich_block.call(request)
+      result.is_a?(Hash) ? result : nil
+    rescue => e
+      unless @enrich_warned
+        log_rescue(e)
+        @enrich_warned = true
+      end
       nil
     end
 

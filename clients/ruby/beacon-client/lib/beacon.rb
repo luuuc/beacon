@@ -1,5 +1,6 @@
 require "beacon/version"
 require "beacon/configuration"
+require "beacon/enrichment"
 require "beacon/fingerprint"
 require "beacon/log_throttle"
 require "beacon/lru"

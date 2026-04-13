@@ -6,7 +6,7 @@ module Beacon
                   :async, :app_root, :pillars,
                   :flush_interval, :flush_threshold, :queue_size,
                   :connect_timeout, :read_timeout,
-                  :cache_size, :enabled
+                  :cache_size, :enabled, :ambient
 
     def initialize
       @endpoint        = ENV["BEACON_ENDPOINT"] || "http://127.0.0.1:4680"
@@ -28,6 +28,14 @@ module Beacon
       # probes), and there is no realistic scenario where one should be
       # tuned independently of the other.
       @cache_size = 1024
+
+      # Ambient mode: when true, middleware sends kind: 'ambient' events
+      # for HTTP requests in addition to perf events.
+      @ambient = false
+
+      # Enrichment block: called on every request to provide dimensions
+      # (country, plan, locale, etc.) that flow to all event kinds.
+      @enrich_context_block = nil
 
       # Global kill switch. When false, Beacon::Middleware is a
       # passthrough, Beacon.track returns nil, and the flusher thread
@@ -54,6 +62,17 @@ module Beacon
 
     def pillar?(name)
       @pillars.include?(name)
+    end
+
+    # Register or read the enrichment block. With a block: registers it.
+    # Without: returns the current block (or nil). The block receives a
+    # Rack request and returns a Hash of dimensions (e.g. { country: "US" }).
+    def enrich_context(&block)
+      if block
+        @enrich_context_block = block
+      else
+        @enrich_context_block
+      end
     end
 
     private
