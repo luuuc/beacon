@@ -99,8 +99,8 @@ func (a *Adapter) Close() error {
 
 const insertEventSQL = `
 INSERT INTO beacon_events
-  (kind, name, actor_type, actor_id, duration_ms, status, fingerprint, properties, context, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, COALESCE($10, NOW()))
+  (kind, name, actor_type, actor_id, duration_ms, status, fingerprint, properties, context, dimensions, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11, NOW()))
 RETURNING id`
 
 func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]int64, error) {
@@ -127,6 +127,10 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 		if err != nil {
 			return nil, fmt.Errorf("event[%d] context: %w", i, err)
 		}
+		dims, err := marshalJSON(e.Dimensions)
+		if err != nil {
+			return nil, fmt.Errorf("event[%d] dimensions: %w", i, err)
+		}
 		var createdAt any
 		if !e.CreatedAt.IsZero() {
 			createdAt = e.CreatedAt
@@ -134,7 +138,7 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 		batch.Queue(insertEventSQL,
 			string(e.Kind), e.Name, e.ActorType, e.ActorID,
 			nullableInt32(e.DurationMs), nullableInt32(e.Status),
-			e.Fingerprint, props, cx, createdAt,
+			e.Fingerprint, props, cx, dims, createdAt,
 		)
 	}
 
@@ -181,7 +185,7 @@ func (a *Adapter) ListEvents(ctx context.Context, filter beacondb.EventFilter) (
 	}
 	sql := `
 SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
-       fingerprint, properties, context, created_at
+       fingerprint, properties, context, dimensions, created_at
   FROM beacon_events`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
@@ -201,10 +205,10 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 		var e beacondb.Event
 		var kind string
 		var dur, status *int32
-		var propsBytes, ctxBytes []byte
+		var propsBytes, ctxBytes, dimsBytes []byte
 		if err := rows.Scan(
 			&e.ID, &kind, &e.Name, &e.ActorType, &e.ActorID,
-			&dur, &status, &e.Fingerprint, &propsBytes, &ctxBytes, &e.CreatedAt,
+			&dur, &status, &e.Fingerprint, &propsBytes, &ctxBytes, &dimsBytes, &e.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -215,6 +219,9 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 			return nil, err
 		}
 		if err := unmarshalJSON(ctxBytes, &e.Context); err != nil {
+			return nil, err
+		}
+		if err := unmarshalJSON(dimsBytes, &e.Dimensions); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

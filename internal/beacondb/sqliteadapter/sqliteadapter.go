@@ -73,8 +73,8 @@ func (a *Adapter) Close() error { return a.db.Close() }
 
 const insertEventSQL = `
 INSERT INTO beacon_events
-  (kind, name, actor_type, actor_id, duration_ms, status, fingerprint, properties, context, created_at)
-VALUES (?,?,?,?,?,?,?,?,?,?)`
+  (kind, name, actor_type, actor_id, duration_ms, status, fingerprint, properties, context, dimensions, created_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?)`
 
 func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]int64, error) {
 	if len(events) == 0 {
@@ -102,6 +102,10 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 		if err != nil {
 			return nil, fmt.Errorf("event[%d] context: %w", i, err)
 		}
+		dims, err := marshalJSON(e.Dimensions)
+		if err != nil {
+			return nil, fmt.Errorf("event[%d] dimensions: %w", i, err)
+		}
 		ts := e.CreatedAt
 		if ts.IsZero() {
 			ts = time.Now().UTC()
@@ -109,7 +113,7 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 		res, err := stmt.ExecContext(ctx,
 			string(e.Kind), e.Name, e.ActorType, e.ActorID,
 			nullableInt32(e.DurationMs), nullableInt32(e.Status),
-			e.Fingerprint, string(props), string(cx), ts.UnixNano(),
+			e.Fingerprint, string(props), string(cx), string(dims), ts.UnixNano(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert event[%d]: %w", i, err)
@@ -154,7 +158,7 @@ func (a *Adapter) ListEvents(ctx context.Context, filter beacondb.EventFilter) (
 
 	sqlStr := `
 SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
-       fingerprint, properties, context, created_at
+       fingerprint, properties, context, dimensions, created_at
   FROM beacon_events`
 	if len(where) > 0 {
 		sqlStr += " WHERE " + strings.Join(where, " AND ")
@@ -175,12 +179,12 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 			e         beacondb.Event
 			kind      string
 			dur, stat sql.NullInt32
-			props, cx string
+			props, cx, dims string
 			createdNS int64
 		)
 		if err := rows.Scan(
 			&e.ID, &kind, &e.Name, &e.ActorType, &e.ActorID,
-			&dur, &stat, &e.Fingerprint, &props, &cx, &createdNS,
+			&dur, &stat, &e.Fingerprint, &props, &cx, &dims, &createdNS,
 		); err != nil {
 			return nil, err
 		}
@@ -197,6 +201,9 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 			return nil, err
 		}
 		if err := unmarshalJSON([]byte(cx), &e.Context); err != nil {
+			return nil, err
+		}
+		if err := unmarshalJSON([]byte(dims), &e.Dimensions); err != nil {
 			return nil, err
 		}
 		e.CreatedAt = time.Unix(0, createdNS).UTC()

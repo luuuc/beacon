@@ -77,6 +77,7 @@ type Event struct {
 	Fingerprint string         // error events only; "" otherwise
 	Properties  map[string]any // open schema
 	Context     map[string]any // closed schema: request_id, deploy_sha, environment, host
+	Dimensions  map[string]any // enrichment dimensions for rollup bucketing
 	CreatedAt   time.Time
 }
 

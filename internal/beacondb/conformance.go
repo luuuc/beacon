@@ -89,6 +89,33 @@ func RunConformance(t *testing.T, factory func(tb testing.TB) Adapter) {
 		}
 	})
 
+	run("InsertEvents_dimensionsRoundTrip", func(t *testing.T, a Adapter) {
+		ctx := context.Background()
+		dims := map[string]any{"country": "US", "plan": "pro"}
+		events := []Event{
+			{Kind: KindAmbient, Name: "http_request", Dimensions: dims, CreatedAt: t0(0)},
+			{Kind: KindPerf, Name: "GET /", CreatedAt: t0(1)}, // no dimensions
+		}
+		if _, err := a.InsertEvents(ctx, events); err != nil {
+			t.Fatalf("InsertEvents: %v", err)
+		}
+		all, err := a.ListEvents(ctx, EventFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) != 2 {
+			t.Fatalf("rows = %d, want 2", len(all))
+		}
+		// Event with dimensions should round-trip them.
+		if all[0].Dimensions["country"] != "US" || all[0].Dimensions["plan"] != "pro" {
+			t.Errorf("dimensions not round-tripped: %+v", all[0].Dimensions)
+		}
+		// Event without dimensions should have nil or empty map.
+		if len(all[1].Dimensions) != 0 {
+			t.Errorf("expected empty dimensions, got %+v", all[1].Dimensions)
+		}
+	})
+
 	run("InsertEvents_emptyBatchIsNoOp", func(t *testing.T, a Adapter) {
 		ids, err := a.InsertEvents(context.Background(), nil)
 		if err != nil {
