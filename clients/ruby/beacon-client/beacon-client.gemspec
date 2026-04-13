@@ -1,6 +1,8 @@
+require_relative "lib/beacon/version"
+
 Gem::Specification.new do |s|
   s.name        = "beacon-client"
-  s.version     = "0.5.0"
+  s.version     = ENV.fetch("BEACON_VERSION") { Beacon::VERSION }
   s.summary     = "Ruby client for Beacon — the small observability accessory"
   s.description = "Captures perf, errors, and outcomes from a Rack/Rails app and ships them to a Beacon server."
   s.authors     = ["Luc B. Perussault-Diallo"]
