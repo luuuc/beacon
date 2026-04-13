@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultEndpoint    = "http://127.0.0.1:4681/rpc"
+	defaultEndpoint    = "http://127.0.0.1:4680/mcp/rpc"
 	proxyScannerBufMax = 1 << 20 // 1 MB
 	proxyHTTPTimeout   = 30 * time.Second
 )

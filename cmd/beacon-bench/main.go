@@ -37,7 +37,6 @@ type config struct {
 	MaxCPUPct   float64
 	BeaconBin   string
 	BeaconPort  int
-	MCPPort     int
 	PostgresURL string // if set, use PG instead of SQLite
 	KeepDB      bool
 }
@@ -50,7 +49,6 @@ func main() {
 	flag.Float64Var(&cfg.MaxCPUPct, "max-cpu-pct", 25, "fail if peak CPU exceeds this percent of one core")
 	flag.StringVar(&cfg.BeaconBin, "binary", "", "path to the beacon binary (defaults to ./beacon or $PATH lookup)")
 	flag.IntVar(&cfg.BeaconPort, "port", 14690, "port for beacon HTTP")
-	flag.IntVar(&cfg.MCPPort, "mcp-port", 14691, "port for beacon MCP")
 	flag.StringVar(&cfg.PostgresURL, "postgres-url", "", "if set, bench against this Postgres instance instead of SQLite")
 	flag.BoolVar(&cfg.KeepDB, "keep-db", false, "do not delete the temp SQLite database on exit")
 	flag.Parse()
@@ -190,23 +188,21 @@ func writeBeaconConfig(path, dbPath string, cfg config) error {
 	if cfg.PostgresURL != "" {
 		body = fmt.Sprintf(`server:
   http_port: %d
-  mcp_port: %d
 database:
   adapter: postgres
   url: %s
 rollup:
   tick_seconds: 5
-`, cfg.BeaconPort, cfg.MCPPort, cfg.PostgresURL)
+`, cfg.BeaconPort, cfg.PostgresURL)
 	} else {
 		body = fmt.Sprintf(`server:
   http_port: %d
-  mcp_port: %d
 database:
   adapter: sqlite
   path: %s
 rollup:
   tick_seconds: 5
-`, cfg.BeaconPort, cfg.MCPPort, dbPath)
+`, cfg.BeaconPort, dbPath)
 	}
 	return os.WriteFile(path, []byte(body), 0o600)
 }

@@ -83,14 +83,14 @@ Add a `.mcp.json` to your project root:
   "mcpServers": {
     "beacon": {
       "command": "beacon",
-      "args": ["mcp", "proxy", "http://localhost:4681/rpc"],
+      "args": ["mcp", "proxy", "http://localhost:4680/mcp/rpc"],
       "env": { "BEACON_AUTH_TOKEN": "devtoken" }
     }
   }
 }
 ```
 
-For staging/production, replace the URL with an HTTPS endpoint (e.g. `https://beacon-mcp.example.com/rpc`) and set the token from an environment variable.
+For staging/production, replace the URL with an HTTPS endpoint (e.g. `https://beacon.example.com/mcp/rpc`) and set the token from an environment variable.
 
 Six read-only tools appear in Claude Code, Claude Desktop, or Cursor: `beacon.errors`, `beacon.perf_drift`, `beacon.metric`, `beacon.compare`, `beacon.outcome_check`, and `beacon.deploy_baseline`.
 
