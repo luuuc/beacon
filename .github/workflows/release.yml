@@ -87,7 +87,7 @@ jobs:
         id: version
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=main-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           fi
