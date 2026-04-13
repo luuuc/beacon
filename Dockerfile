@@ -88,14 +88,14 @@ COPY --from=builder /out/beacon /usr/local/bin/beacon
 
 VOLUME ["/var/lib/beacon"]
 
-EXPOSE 4680 4681
+EXPOSE 4680
 
 USER beacon
 
-# HTTP healthcheck against /healthz. Busybox wget ships in alpine so this
-# is zero extra weight. --spider does not download the body.
+# HTTP healthcheck against /api/healthz. Busybox wget ships in alpine so
+# this is zero extra weight. --spider does not download the body.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://127.0.0.1:4680/healthz || exit 1
+    CMD wget -q --spider http://127.0.0.1:4680/api/healthz || exit 1
 
 ENTRYPOINT ["/usr/local/bin/beacon"]
 # Boots on env vars alone. No --config, no baked YAML file — v0.2.0
