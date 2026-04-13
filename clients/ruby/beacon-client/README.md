@@ -44,6 +44,54 @@ require "beacon/middleware"
 use Beacon::Middleware
 ```
 
+### Ambient mode + enrichment
+
+Enable ambient mode to passively capture operational telemetry (HTTP requests, jobs, mailers) alongside the standard three pillars. Add an `enrich_context` block to attach dimensions (country, plan, locale) to every event:
+
+```ruby
+Beacon.configure do |c|
+  c.endpoint = "http://beacon:4680"
+  c.ambient  = true
+
+  c.enrich_context do |request|
+    user = request.env["warden"]&.user
+    {
+      country: user&.country || Beacon::Enrichment.country_from_cdn(request),
+      plan:    user&.plan_name
+    }
+  end
+end
+```
+
+The enrichment block runs on every request. Keep it fast — use data already loaded by the app, don't make database queries. If the block raises, the event sends without dimensions and a warning is logged once.
+
+#### Enrichment examples
+
+**Devise/Warden (most Rails apps):**
+```ruby
+c.enrich_context do |request|
+  user = request.env["warden"]&.user
+  { country: user&.country, plan: user&.plan_name }
+end
+```
+
+**CDN geo headers (Cloudflare, Fastly, or CloudFront):**
+```ruby
+c.enrich_context do |request|
+  { country: Beacon::Enrichment.country_from_cdn(request) }
+end
+```
+The helper checks all three CDNs in priority order — no CDN-specific code needed.
+
+**No CDN, no auth — just browser locale:**
+```ruby
+c.enrich_context do |request|
+  { locale: request.env["HTTP_ACCEPT_LANGUAGE"]&.split(",")&.first }
+end
+```
+
+`Beacon::Enrichment.country_from_cdn` checks Cloudflare, Fastly, and CloudFront headers in priority order. Returns a two-letter ISO code or `nil`.
+
 ### Kill switch
 
 To silence Beacon entirely without removing the gem:
