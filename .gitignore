@@ -80,3 +80,4 @@ beacon.yml
 *.db-shm
 *.db-wal
 *.log
+.env.local
