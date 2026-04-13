@@ -49,6 +49,7 @@ module Beacon
       @enabled        = config.enabled?
       @capture_perf   = config.pillar?(:perf)
       @capture_errors = config.pillar?(:errors)
+      @capture_ambient = config.ambient
       @enrich_block   = config.enrich_context
       @enrich_warned  = false
 
@@ -89,27 +90,32 @@ module Beacon
       return @app.call(env) unless @enabled
 
       start_ns = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
+      # Compute enrichment once per request — the result is shared across
+      # perf, ambient, and error events to avoid double-invoking the user's
+      # block (which may touch Warden/session/DB).
+      dims = enrich_dimensions(env) if @enrich_block
       begin
         status, headers, body = @app.call(env)
       rescue Exception => host_error  # rubocop:disable Lint/RescueException
-        capture_perf(env, 500, start_ns) if @capture_perf
-        capture_error(env, host_error)   if @capture_errors
+        capture_perf(env, 500, start_ns, dims) if @capture_perf
+        capture_ambient(env, 500, start_ns, dims) if @capture_ambient
+        capture_error(env, host_error, dims)   if @capture_errors
         raise
       end
-      capture_perf(env, status, start_ns) if @capture_perf
+      capture_perf(env, status, start_ns, dims) if @capture_perf
+      capture_ambient(env, status, start_ns, dims) if @capture_ambient
       [status, headers, body]
     end
 
     private
 
-    def capture_perf(env, status, start_ns)
+    def capture_perf(env, status, start_ns, dims)
       now_ns      = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
       duration_ms = (now_ns - start_ns) / 1_000_000
       method      = env["REQUEST_METHOD"] || "GET"
       template    = env["beacon.route_template"]
       path        = env["PATH_INFO"] || "/"
       name        = template || cached_name(method, path)
-      dims        = enrich_dimensions(env)
 
       @sink << {
         kind: :perf,
@@ -125,11 +131,10 @@ module Beacon
       nil
     end
 
-    def capture_error(env, exception)
+    def capture_error(env, exception, dims)
       frame       = first_app_frame(exception)
       fingerprint = Fingerprint.compute(exception.class.name, frame || "")
       send_full   = should_send_full_stack?(fingerprint)
-      dims        = enrich_dimensions(env)
 
       properties = {
         fingerprint:     fingerprint,
@@ -146,6 +151,31 @@ module Beacon
         name: exception.class.name,
         created_at_ns: realtime_ns,
         properties: properties,
+        context: @base_context,
+        dimensions: dims,
+      }
+      nil
+    rescue => e
+      log_rescue(e)
+      nil
+    end
+
+    def capture_ambient(env, status, start_ns, dims)
+      now_ns      = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
+      duration_ms = (now_ns - start_ns) / 1_000_000
+      method      = env["REQUEST_METHOD"] || "GET"
+      path        = env["PATH_INFO"] || "/"
+
+      @sink << {
+        kind: :ambient,
+        name: "http_request",
+        created_at_ns: realtime_ns,
+        properties: {
+          path: path,
+          method: method,
+          status: status,
+          duration_ms: duration_ms,
+        },
         context: @base_context,
         dimensions: dims,
       }
