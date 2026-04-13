@@ -1,0 +1,21 @@
+{{define "anomalies-cards"}}
+<div id="anomalies-cards" hx-get="/anomalies" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if .Anomalies}}
+  <div class="card-grid">
+    {{range .Anomalies}}
+    {{template "anomaly_card.html" .}}
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <p>Nothing unusual. All signals are within normal range.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "content"}}
+<h1>Anomalies</h1>
+<p class="subtitle">Anything unusual?</p>
+{{template "anomalies-cards" .}}
+{{end}}
+{{define "anomalies.html"}}{{template "layout.html" .}}{{end}}

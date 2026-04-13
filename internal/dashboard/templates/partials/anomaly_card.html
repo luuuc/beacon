@@ -1,0 +1,20 @@
+{{define "anomaly_card.html"}}
+<div class="card anomaly-card">
+  <div class="card-header">
+    <span class="card-name">{{.Name}}</span>
+    <span class="badge badge-{{.BadgeClass}}">{{.AnomalyKind}}</span>
+  </div>
+  {{if .Dimension}}
+  <div class="card-dimension">{{.Dimension}}</div>
+  {{end}}
+  <div class="card-metrics">
+    <span class="card-count">{{.Current}} in 24h</span>
+    <span class="card-baseline">baseline {{.BaselineMean}}</span>
+    <span class="card-sigma">{{.Sigma}} deviation</span>
+  </div>
+  <div class="card-detail">{{.Summary}}</div>
+  {{if .Link}}
+  <a href="{{.Link}}" class="card-action">View detail →</a>
+  {{end}}
+</div>
+{{end}}

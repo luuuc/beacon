@@ -175,6 +175,10 @@ func TestLandingPageWithData(t *testing.T) {
 	if !strings.Contains(body, "NoMethodError") {
 		t.Error("missing NoMethodError in errors card")
 	}
+	// Anomalies card should always appear (calm state if no anomalies).
+	if !strings.Contains(body, "Anomalies") {
+		t.Error("missing Anomalies card")
+	}
 }
 
 func seedTestData(t *testing.T, fake *memfake.Fake) {
@@ -646,3 +650,107 @@ func TestChartSVG(t *testing.T) {
 		})
 	}
 }
+
+func TestAnomaliesPage_rendersSeededAnomalies(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindAmbient, Name: "http_request",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 100, Sum: fp(5.0), P50: fp(10), P95: fp(1),
+			Fingerprint: "volume_shift", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /anomalies = %d, want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "http_request") {
+		t.Error("missing anomaly name in page")
+	}
+	if !strings.Contains(body, "volume_shift") {
+		t.Error("missing anomaly kind badge")
+	}
+	if !strings.Contains(body, "5.0σ") {
+		t.Error("missing sigma value")
+	}
+}
+
+func TestAnomaliesPage_emptyState(t *testing.T) {
+	_, mux := newTestDashboard(t, "")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /anomalies = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Nothing unusual") {
+		t.Error("missing empty state message")
+	}
+}
+
+func TestAnomaliesPage_htmxPartial(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindPerf, Name: "GET /search",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 200, Sum: fp(8.0), P50: fp(20), P95: fp(2),
+			Fingerprint: "volume_shift", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HX GET /anomalies = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	// Partial should NOT contain the full layout (no <html> tag).
+	if strings.Contains(body, "<html") {
+		t.Error("htmx partial should not contain full layout")
+	}
+	if !strings.Contains(body, "GET /search") {
+		t.Error("htmx partial missing anomaly card")
+	}
+}
+
+func TestLandingAnomalyCard_withAnomaly(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindAmbient, Name: "http_request",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 100, Sum: fp(12.4), P50: fp(10), P95: fp(1),
+			Fingerprint: "volume_shift", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "http_request") {
+		t.Error("landing anomaly card should show top anomaly name")
+	}
+	if !strings.Contains(body, "deviation") {
+		t.Error("landing anomaly card should show deviation info")
+	}
+}
+
+func fp(v float64) *float64 { return &v }

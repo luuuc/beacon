@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/luuuc/beacon/internal/reads"
 )
@@ -30,6 +31,9 @@ func (d *Dashboard) handleLanding(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, *card)
 	}
 	if card := d.errorsHeadline(ctx); card != nil {
+		cards = append(cards, *card)
+	}
+	if card := d.anomaliesHeadline(ctx); card != nil {
 		cards = append(cards, *card)
 	}
 
@@ -95,6 +99,25 @@ func (d *Dashboard) errorsHeadline(ctx context.Context) *landingCard {
 		Sparkline: template.HTML(""),
 		Detail:    fmt.Sprintf("%d occurrences — last seen %s", top.Occurrences, top.LastSeen),
 		Link:      "/errors",
+	}
+}
+
+func (d *Dashboard) anomaliesHeadline(ctx context.Context) *landingCard {
+	resp, err := d.reads.GetAnomalies(ctx, reads.GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil || resp == nil || len(resp.Anomalies) == 0 {
+		return &landingCard{
+			Label:    "Anomalies",
+			Headline: "Nothing unusual",
+			Detail:   "All signals are within normal range",
+			Link:     "/anomalies",
+		}
+	}
+	top := resp.Anomalies[0] // sorted by deviation descending
+	return &landingCard{
+		Label:    "Anomalies",
+		Headline: top.Name,
+		Detail:   fmt.Sprintf("%.1fσ deviation — %d in 24h vs baseline of %.0f", top.DeviationSigma, top.Current, top.BaselineMean),
+		Link:     "/anomalies",
 	}
 }
 
