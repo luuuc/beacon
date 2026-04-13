@@ -34,7 +34,7 @@ func (d *Dashboard) handleLanding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d.render(w, r, "landing.html", "", pageData(map[string]any{
-		"ActiveNav": "",
+		"ActiveNav": "dashboard",
 		"Title":     "",
 		"Cards":     cards,
 	}))

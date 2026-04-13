@@ -113,8 +113,8 @@ func (d *Dashboard) Mount(mux interface {
 	mux.Handle("GET /errors/{fingerprint}", auth(http.HandlerFunc(d.handleErrorDetail)))
 }
 
-// pageData creates a template data map pre-filled with the Version field.
-// Handlers merge their own keys into the returned map.
+// pageData adds shared template fields (Version) to m and returns it.
+// It mutates m in place; callers must pass a fresh map literal.
 func pageData(m map[string]any) map[string]any {
 	m["Version"] = version.Version
 	return m

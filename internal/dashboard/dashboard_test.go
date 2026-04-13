@@ -292,6 +292,34 @@ func TestPerformanceDetailPage(t *testing.T) {
 	}
 }
 
+func TestPerformanceDetailPage_slashInName(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+	base := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+
+	name := "PUT /rails/active_storage/blobs/proxy/:signed_id/upload"
+	for i := 0; i < 24; i++ {
+		p95 := 125.0
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: name,
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       30, P95: &p95,
+		}})
+	}
+
+	// Request with literal slashes — the {name...} wildcard must capture all segments.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance/PUT%20/rails/active_storage/blobs/proxy/:signed_id/upload", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /performance/<slashed-name> = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "active_storage") {
+		t.Error("missing endpoint name in response body")
+	}
+}
+
 func TestErrorsPage(t *testing.T) {
 	_, fake, mux := newTestDashboardWithFake(t, "")
 	seedTestData(t, fake)
