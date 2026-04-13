@@ -230,6 +230,14 @@ func (a *Adapter) DeleteEventsOlderThan(ctx context.Context, cutoff time.Time) (
 	return tag.RowsAffected(), nil
 }
 
+func (a *Adapter) DeleteEventsByKindOlderThan(ctx context.Context, kind beacondb.Kind, cutoff time.Time) (int64, error) {
+	tag, err := a.pool.Exec(ctx, `DELETE FROM beacon_events WHERE kind = $1 AND created_at < $2`, string(kind), cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ---------------------------------------------------------------------------
 // beacon_metrics writes + reads
 // ---------------------------------------------------------------------------

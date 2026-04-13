@@ -263,6 +263,40 @@ func RunConformance(t *testing.T, factory func(tb testing.TB) Adapter) {
 		}
 	})
 
+	run("DeleteEventsByKindOlderThan", func(t *testing.T, a Adapter) {
+		ctx := context.Background()
+		seed := []Event{
+			{Kind: KindAmbient, Name: "http_request", CreatedAt: t0(0)},
+			{Kind: KindAmbient, Name: "http_request", CreatedAt: t0(10)},
+			{Kind: KindPerf, Name: "GET /", CreatedAt: t0(0)},
+			{Kind: KindOutcome, Name: "signup", CreatedAt: t0(0)},
+		}
+		if _, err := a.InsertEvents(ctx, seed); err != nil {
+			t.Fatal(err)
+		}
+		// Delete only ambient events older than t0(5).
+		n, err := a.DeleteEventsByKindOlderThan(ctx, KindAmbient, t0(5))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("deleted = %d, want 1", n)
+		}
+		remaining, err := a.ListEvents(ctx, EventFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(remaining) != 3 {
+			t.Errorf("remaining = %d, want 3 (ambient@t10, perf@t0, outcome@t0)", len(remaining))
+		}
+		// Verify the perf and outcome events at t0 survived.
+		for _, e := range remaining {
+			if e.Kind == KindAmbient && e.CreatedAt.Equal(t0(0)) {
+				t.Error("ambient event at t0 should have been deleted")
+			}
+		}
+	})
+
 	run("DeleteEventsOlderThan", func(t *testing.T, a Adapter) {
 		ctx := context.Background()
 		seed := []Event{

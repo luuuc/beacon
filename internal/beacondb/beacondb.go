@@ -28,6 +28,7 @@ const (
 	KindOutcome  Kind = "outcome"
 	KindPerf     Kind = "perf"
 	KindError    Kind = "error"
+	KindAmbient  Kind = "ambient"
 	KindBaseline Kind = "baseline" // metrics only
 )
 
@@ -36,7 +37,7 @@ const (
 // should do so explicitly.
 func (k Kind) Valid() bool {
 	switch k {
-	case KindOutcome, KindPerf, KindError, KindBaseline:
+	case KindOutcome, KindPerf, KindError, KindAmbient, KindBaseline:
 		return true
 	}
 	return false
@@ -166,6 +167,11 @@ type Adapter interface {
 	// DeleteEventsOlderThan removes raw events with created_at < cutoff.
 	// Returns the number of rows deleted.
 	DeleteEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+
+	// DeleteEventsByKindOlderThan removes raw events matching the given kind
+	// with created_at < cutoff. Used for two-tier retention: ambient events
+	// prune at 24h while other kinds retain the standard 14d window.
+	DeleteEventsByKindOlderThan(ctx context.Context, kind Kind, cutoff time.Time) (int64, error)
 
 	// Close releases the adapter's resources.
 	Close() error

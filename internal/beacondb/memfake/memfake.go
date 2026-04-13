@@ -243,6 +243,28 @@ func (f *Fake) DeleteEventsOlderThan(_ context.Context, cutoff time.Time) (int64
 	return deleted, nil
 }
 
+func (f *Fake) DeleteEventsByKindOlderThan(_ context.Context, kind beacondb.Kind, cutoff time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.requireMigrated(); err != nil {
+		return 0, err
+	}
+	kept := f.events[:0]
+	var deleted int64
+	for _, e := range f.events {
+		if e.Kind == kind && e.CreatedAt.Before(cutoff) {
+			deleted++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	for i := len(kept); i < len(f.events); i++ {
+		f.events[i] = beacondb.Event{}
+	}
+	f.events = kept
+	return deleted, nil
+}
+
 func (f *Fake) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
