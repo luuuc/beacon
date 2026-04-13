@@ -493,7 +493,7 @@ h1 {
 
 @media (max-width: 768px) {
   :root {
-    --bottom-nav-height: 60px;
+    --bottom-nav-height: 80px;
   }
 
   .desktop-only {
@@ -535,6 +535,7 @@ h1 {
     justify-content: space-around;
     z-index: 10;
     padding: 0 0.5rem;
+    bottom: 20px;
   }
 
   .bottom-nav-link {
