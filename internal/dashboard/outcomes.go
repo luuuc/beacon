@@ -36,11 +36,11 @@ func (d *Dashboard) handleOutcomes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	d.render(w, r, "outcomes.html", "outcomes-cards", map[string]any{
+	d.render(w, r, "outcomes.html", "outcomes-cards", pageData(map[string]any{
 		"ActiveNav": "outcomes",
 		"Title":     "Outcomes",
 		"Metrics":   cards,
-	})
+	}))
 }
 
 func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) {
@@ -54,11 +54,11 @@ func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		d.log.Error("outcome detail query", "name", name, "err", err)
-		d.render(w, r, "metric_detail.html", "", map[string]any{
+		d.render(w, r, "metric_detail.html", "", pageData(map[string]any{
 			"ActiveNav": "outcomes",
 			"Title":     name,
 			"Name":      name,
-		})
+		}))
 		return
 	}
 
@@ -95,13 +95,13 @@ func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) 
 		stats = append(stats, stat{"Baseline captured", resp.Baseline.CapturedAt})
 	}
 
-	d.render(w, r, "metric_detail.html", "", map[string]any{
+	d.render(w, r, "metric_detail.html", "", pageData(map[string]any{
 		"ActiveNav": "outcomes",
 		"Title":     name,
 		"Name":      name,
 		"Chart":     chart,
 		"Stats":     stats,
-	})
+	}))
 }
 
 type stat struct {

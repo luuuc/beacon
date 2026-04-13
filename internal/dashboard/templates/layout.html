@@ -12,19 +12,39 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
-  <nav class="nav">
+  <header class="header">
     <a href="/" class="nav-logo">
       <img src="/static/logo.svg" alt="Beacon" width="24" height="24">
       <span>Beacon</span>
     </a>
-    <div class="nav-links">
+    <nav class="nav-links desktop-only">
+      <a href="/" class="nav-link{{if eq .ActiveNav ""}} active{{end}}">Dashboard</a>
       <a href="/outcomes" class="nav-link{{if eq .ActiveNav "outcomes"}} active{{end}}">Outcomes</a>
       <a href="/performance" class="nav-link{{if eq .ActiveNav "performance"}} active{{end}}">Performance</a>
       <a href="/errors" class="nav-link{{if eq .ActiveNav "errors"}} active{{end}}">Errors</a>
-    </div>
-  </nav>
+    </nav>
+    {{if .Version}}<a href="https://github.com/luuuc/beacon" class="version-label" target="_blank" rel="noopener">v{{.Version}}</a>{{end}}
+  </header>
   <main class="main">
     {{template "content" .}}
   </main>
+  <nav class="bottom-nav mobile-only">
+    <a href="/" class="bottom-nav-link{{if eq .ActiveNav ""}} active{{end}}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      <span>Dashboard</span>
+    </a>
+    <a href="/outcomes" class="bottom-nav-link{{if eq .ActiveNav "outcomes"}} active{{end}}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Outcomes</span>
+    </a>
+    <a href="/performance" class="bottom-nav-link{{if eq .ActiveNav "performance"}} active{{end}}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+      <span>Performance</span>
+    </a>
+    <a href="/errors" class="bottom-nav-link{{if eq .ActiveNav "errors"}} active{{end}}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>Errors</span>
+    </a>
+  </nav>
 </body>
 </html>{{end}}

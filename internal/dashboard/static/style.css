@@ -21,6 +21,7 @@
   --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  --bottom-nav-height: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,9 +58,9 @@ html {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Navigation */
+/* Header */
 
-.nav {
+.header {
   display: flex;
   align-items: center;
   gap: 2rem;
@@ -79,6 +80,7 @@ html {
   color: var(--fg);
   font-weight: 600;
   font-size: 1.1rem;
+  flex-shrink: 0;
 }
 
 .nav-logo img {
@@ -110,12 +112,32 @@ html {
   }
 }
 
+.version-label {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  text-decoration: none;
+  opacity: 0.6;
+  flex-shrink: 0;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+/* Bottom nav (mobile) */
+
+.bottom-nav {
+  display: none;
+}
+
 /* Main content */
 
 .main {
   max-width: 1200px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
+  padding-bottom: calc(2rem + var(--bottom-nav-height));
 }
 
 h1 {
@@ -148,6 +170,7 @@ h1 {
   color: var(--fg);
   box-shadow: var(--card-shadow);
   transition: box-shadow 0.2s, border-color 0.2s;
+  min-width: 0;
 
   &:hover {
     box-shadow: var(--card-hover-shadow);
@@ -240,7 +263,7 @@ h1 {
 
 .landing-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 1.25rem;
 }
 
@@ -261,6 +284,8 @@ h1 {
   font-size: 1.5rem;
   font-weight: 700;
   margin-bottom: 0.5rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Badge */
@@ -461,22 +486,32 @@ h1 {
   font-size: 0.95rem;
 }
 
+/* Visibility helpers */
+
+.mobile-only { display: none; }
+
 /* Responsive */
 
 @media (max-width: 768px) {
-  .nav {
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    padding: 0.5rem 1rem;
+  :root {
+    --bottom-nav-height: 60px;
   }
 
-  .nav-links {
-    width: 100%;
-    justify-content: center;
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: flex;
+  }
+
+  .header {
+    padding: 0.5rem 1rem;
   }
 
   .main {
     padding: 1.25rem 1rem;
+    padding-bottom: calc(1.25rem + var(--bottom-nav-height));
   }
 
   .landing-cards {
@@ -485,5 +520,47 @@ h1 {
 
   .card-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Bottom navigation bar */
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--bottom-nav-height);
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    z-index: 10;
+    padding: 0 0.5rem;
+  }
+
+  .bottom-nav-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    text-decoration: none;
+    color: var(--fg-muted);
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    transition: color 0.15s;
+
+    & svg {
+      flex-shrink: 0;
+    }
+
+    &.active {
+      color: var(--accent);
+    }
+
+    &:hover {
+      color: var(--fg);
+    }
   }
 }

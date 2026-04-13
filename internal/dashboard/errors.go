@@ -52,11 +52,11 @@ func (d *Dashboard) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	d.render(w, r, "errors.html", "errors-cards", map[string]any{
+	d.render(w, r, "errors.html", "errors-cards", pageData(map[string]any{
 		"ActiveNav": "errors",
 		"Title":     "Errors",
 		"Errors":    cards,
-	})
+	}))
 }
 
 func (d *Dashboard) handleErrorDetail(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func (d *Dashboard) handleErrorDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	d.render(w, r, "error_detail.html", "", map[string]any{
+	d.render(w, r, "error_detail.html", "", pageData(map[string]any{
 		"ActiveNav":   "errors",
 		"Title":       name,
 		"Name":        name,
@@ -129,7 +129,7 @@ func (d *Dashboard) handleErrorDetail(w http.ResponseWriter, r *http.Request) {
 		"Chart":       chart,
 		"Stats":       stats,
 		"StackTrace":  stackTrace,
-	})
+	}))
 }
 
 func formatTimeAgo(rfc3339 string) string {

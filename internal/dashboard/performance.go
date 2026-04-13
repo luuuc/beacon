@@ -41,11 +41,11 @@ func (d *Dashboard) handlePerformance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	d.render(w, r, "performance.html", "performance-cards", map[string]any{
+	d.render(w, r, "performance.html", "performance-cards", pageData(map[string]any{
 		"ActiveNav": "performance",
 		"Title":     "Performance",
 		"Endpoints": cards,
-	})
+	}))
 }
 
 func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Request) {
@@ -59,11 +59,11 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		d.log.Error("perf detail query", "name", name, "err", err)
-		d.render(w, r, "endpoint_detail.html", "", map[string]any{
+		d.render(w, r, "endpoint_detail.html", "", pageData(map[string]any{
 			"ActiveNav": "performance",
 			"Title":     name,
 			"Name":      name,
-		})
+		}))
 		return
 	}
 
@@ -102,13 +102,13 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 	stats = append(stats, stat{"Window", "7d"})
 	stats = append(stats, stat{"Period", resp.PeriodKind})
 
-	d.render(w, r, "endpoint_detail.html", "", map[string]any{
+	d.render(w, r, "endpoint_detail.html", "", pageData(map[string]any{
 		"ActiveNav": "performance",
 		"Title":     name,
 		"Name":      name,
 		"Chart":     chart,
 		"Stats":     stats,
-	})
+	}))
 }
 
 func sigmaDriftLabel(sigmas float64) (string, string) {

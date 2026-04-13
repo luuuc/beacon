@@ -33,11 +33,11 @@ func (d *Dashboard) handleLanding(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, *card)
 	}
 
-	d.render(w, r, "landing.html", "", map[string]any{
+	d.render(w, r, "landing.html", "", pageData(map[string]any{
 		"ActiveNav": "",
 		"Title":     "",
 		"Cards":     cards,
-	})
+	}))
 }
 
 func (d *Dashboard) outcomesHeadline(ctx context.Context) *landingCard {
