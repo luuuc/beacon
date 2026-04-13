@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -321,4 +322,23 @@ func (c *Config) Validate() error {
 		)
 	}
 	return nil
+}
+
+// ParseBeaconDuration parses a duration string like "14d", "24h", "7d".
+// The "d" suffix (days) extends Go's time.ParseDuration which handles
+// "h", "m", "s", "ms", etc. natively. For any string not ending in "d",
+// the standard library parser handles it — including compound forms like
+// "1h30m".
+func ParseBeaconDuration(s string) (time.Duration, error) {
+	if len(s) == 0 {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if s[len(s)-1] == 'd' {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil {
+			return 0, fmt.Errorf("parse %q: %w", s, err)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
