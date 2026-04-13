@@ -58,6 +58,15 @@ module FakeRails
       def before_configuration_blocks
         @before_configuration_blocks ||= []
       end
+
+      def after_initialize(&block)
+        @after_initialize_blocks ||= []
+        @after_initialize_blocks << block
+      end
+
+      def after_initialize_blocks
+        @after_initialize_blocks ||= []
+      end
     end
   end
 end
@@ -248,6 +257,35 @@ class RailsRailtieTest < Minitest::Test
         $stderr = orig_stderr
       end
     end
+  end
+
+  def test_auto_fires_deploy_shipped_when_deploy_sha_present
+    Beacon.config.deploy_sha = "abc123"
+    Beacon.config.async = false
+    Beacon::Testing.reset_client!
+
+    after_init = Beacon::Railtie.config.after_initialize_blocks.last
+    refute_nil after_init, "Railtie should register an after_initialize block"
+    after_init.call
+
+    events = Beacon.client.queue.drain(100)
+    deploy_event = events.find { |e| e[:name] == "deploy.shipped" }
+    refute_nil deploy_event, "should have fired deploy.shipped"
+    assert_equal "abc123", deploy_event[:properties][:version]
+    assert_equal true, deploy_event[:properties][:auto]
+  end
+
+  def test_does_not_fire_deploy_shipped_when_no_sha
+    Beacon.config.deploy_sha = nil
+    Beacon.config.async = false
+    Beacon::Testing.reset_client!
+
+    after_init = Beacon::Railtie.config.after_initialize_blocks.last
+    after_init.call
+
+    events = Beacon.client.queue.drain(100)
+    deploy_event = events.find { |e| e[:name] == "deploy.shipped" }
+    assert_nil deploy_event, "should not fire deploy.shipped without a SHA"
   end
 
   def test_middleware_defaults_sink_to_beacon_client

@@ -103,6 +103,24 @@ module Beacon
       Process.singleton_class.prepend(ForkHook)
     end
 
+    # Auto-fire deploy.shipped on first boot when a deploy SHA is
+    # available (KAMAL_VERSION or GIT_SHA). This runs once in the
+    # master process before workers fork, so exactly one event per
+    # deploy. The rake task remains available for manual/hook use
+    # but is no longer required for basic deploy tracking.
+    config.after_initialize do
+      next unless Beacon.config.enabled?
+      next unless Beacon.config.pillar?(:outcomes)
+      sha = Beacon.config.deploy_sha
+      next if sha.nil? || sha.to_s.empty?
+
+      Beacon.track("deploy.shipped",
+        version:     sha,
+        environment: Beacon.config.environment,
+        auto:        true,
+      )
+    end
+
     # Auto-load shipped rake tasks into the host app. Rails runs this
     # block when the `rake` CLI discovers tasks (so `rails -T beacon`
     # in a host app lists `beacon:deploy_shipped` without any setup).
