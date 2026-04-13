@@ -78,7 +78,8 @@ func TestAccepted202(t *testing.T) {
 			"kind":       "ambient",
 			"name":       "http_request",
 			"created_at": fixedNow.Format(time.RFC3339),
-			"properties": map[string]any{"path": "/search", "method": "GET", "status": 200, "country": "US"},
+			"properties": map[string]any{"path": "/search", "method": "GET", "status": 200},
+			"dimensions": map[string]any{"country": "US", "plan": "pro"},
 		},
 	)
 	rec := doPost(t, h, body, nil)
@@ -119,8 +120,12 @@ func TestAccepted202(t *testing.T) {
 		t.Errorf("ambient name = %q, want http_request", ambients[0].Name)
 	}
 	// Ambient events keep all properties intact (no field lifting).
-	if ambients[0].Properties["country"] != "US" {
-		t.Errorf("ambient properties.country not preserved: %+v", ambients[0].Properties)
+	if ambients[0].Properties["path"] != "/search" {
+		t.Errorf("ambient properties.path not preserved: %+v", ambients[0].Properties)
+	}
+	// Dimensions are stored separately from properties.
+	if ambients[0].Dimensions["country"] != "US" || ambients[0].Dimensions["plan"] != "pro" {
+		t.Errorf("ambient dimensions not preserved: %+v", ambients[0].Dimensions)
 	}
 }
 

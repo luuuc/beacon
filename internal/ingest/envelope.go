@@ -51,6 +51,7 @@ type envelopeJSON struct {
 	ActorID    json.RawMessage `json:"actor_id"`
 	Properties map[string]any  `json:"properties"`
 	Context    map[string]any  `json:"context"`
+	Dimensions map[string]any  `json:"dimensions"`
 }
 
 // toEvent validates the envelope and lifts kind-specific fields from
@@ -116,12 +117,13 @@ func (e *envelopeJSON) toEvent(now time.Time) (beacondb.Event, []string, error) 
 	}
 
 	out := beacondb.Event{
-		Kind:      kind,
-		Name:      e.Name,
-		ActorType: e.ActorType,
-		ActorID:   actorID,
-		Context:   e.Context,
-		CreatedAt: clientTime,
+		Kind:       kind,
+		Name:       e.Name,
+		ActorType:  e.ActorType,
+		ActorID:    actorID,
+		Context:    e.Context,
+		Dimensions: e.Dimensions,
+		CreatedAt:  clientTime,
 	}
 
 	// Copy properties so we can delete kind-specific keys without mutating
