@@ -34,7 +34,8 @@ type IngestConfig struct {
 type ServerConfig struct {
 	Bind         string     `yaml:"bind"`
 	HTTPPort     int        `yaml:"http_port"`
-	MCPPort      int        `yaml:"mcp_port"`
+	MCPPort      int        `yaml:"mcp_port"`      // Deprecated: ignored. MCP is served on HTTPPort.
+	MCPPortSet   bool       `yaml:"-"`              // True when mcp_port was explicitly set via file or env.
 	PprofEnabled bool       `yaml:"pprof_enabled"`
 	Auth         AuthConfig `yaml:"auth"`
 }
@@ -71,7 +72,6 @@ func Defaults() Config {
 		Server: ServerConfig{
 			Bind:     "127.0.0.1",
 			HTTPPort: 4680,
-			MCPPort:  4681,
 		},
 		Retention: RetentionConfig{
 			EventsDays:      14,
@@ -129,6 +129,7 @@ func applyEnv(cfg *Config) error {
 			return fmt.Errorf("BEACON_MCP_PORT: %w", err)
 		}
 		cfg.Server.MCPPort = n
+		cfg.Server.MCPPortSet = true
 	}
 	if v := os.Getenv("BEACON_AUTH_TOKEN"); v != "" {
 		cfg.Server.Auth.Token = v
@@ -187,6 +188,7 @@ func mergeNonZero(dst, src *Config) {
 	}
 	if src.Server.MCPPort != 0 {
 		dst.Server.MCPPort = src.Server.MCPPort
+		dst.Server.MCPPortSet = true
 	}
 	if src.Server.PprofEnabled {
 		dst.Server.PprofEnabled = true

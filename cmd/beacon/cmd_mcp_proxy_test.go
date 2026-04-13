@@ -262,8 +262,6 @@ func TestProxy_Integration_RealMCPServer(t *testing.T) {
 	worker := rollup.NewWorker(rollup.Config{}, fake, nil)
 
 	mcpSrv := mcpserver.New(mcpserver.Config{
-		Bind:      "127.0.0.1",
-		Port:      0, // let the OS pick
 		AuthToken: "integrationtoken",
 	}, readsH, worker, nil)
 

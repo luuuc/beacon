@@ -19,9 +19,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Server.HTTPPort != 4680 {
 		t.Errorf("http_port = %d, want 4680", cfg.Server.HTTPPort)
 	}
-	if cfg.Server.MCPPort != 4681 {
-		t.Errorf("mcp_port = %d, want 4681", cfg.Server.MCPPort)
-	}
 	if cfg.Rollup.TickSeconds != 60 {
 		t.Errorf("rollup.tick_seconds = %d, want 60", cfg.Rollup.TickSeconds)
 	}
@@ -61,9 +58,9 @@ database:
 	if cfg.Database.URL != "postgres://example/db" {
 		t.Errorf("database.url = %q", cfg.Database.URL)
 	}
-	// Defaults survive for unspecified fields.
-	if cfg.Server.MCPPort != 4681 {
-		t.Errorf("mcp_port default lost: %d", cfg.Server.MCPPort)
+	// MCPPort is deprecated — no default.
+	if cfg.Server.MCPPortSet {
+		t.Errorf("mcp_port_set should be false when not specified")
 	}
 }
 

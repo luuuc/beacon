@@ -31,7 +31,7 @@ func newTestStack(t *testing.T) (*Server, *memfake.Fake) {
 	readsH := reads.NewHandler(reads.Config{Now: clock}, fake, nil)
 	worker := rollup.NewWorker(rollup.Config{Now: clock}, fake, nil)
 
-	srv := New(Config{Bind: "127.0.0.1", Port: 0}, readsH, worker, nil)
+	srv := New(Config{}, readsH, worker, nil)
 	return srv, fake
 }
 
@@ -84,27 +84,6 @@ func toolResultText(t *testing.T, resp rpcResponse, v any) string {
 		}
 	}
 	return text
-}
-
-// ---------------------------------------------------------------------------
-// Health check
-// ---------------------------------------------------------------------------
-
-func TestHealthz(t *testing.T) {
-	srv, _ := newTestStack(t)
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("status = %q, want ok", body["status"])
-	}
 }
 
 // ---------------------------------------------------------------------------

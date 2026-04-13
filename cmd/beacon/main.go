@@ -38,7 +38,7 @@ Usage:
   beacon <command> [flags]
 
 Commands:
-  serve       Run the HTTP (and eventually MCP) listeners and rollup worker
+  serve       Run the HTTP server (API + MCP + dashboard) and rollup worker
   rollup      Run or recompute rollups (not yet implemented)
   baselines   Manage baselines (not yet implemented)
   mcp proxy   Stdio-to-HTTP proxy for MCP clients (Claude Code, etc.)
@@ -170,14 +170,17 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 	dash.Mount(muxAdapter{srv: srv})
 
 	mcpSrv := mcpserver.New(mcpserver.Config{
-		Bind:      cfg.Server.Bind,
-		Port:      cfg.Server.MCPPort,
 		AuthToken: cfg.Server.Auth.Token,
 	}, readsH, worker, log)
+	srv.Mount("POST /mcp/rpc", mcpSrv.Handler())
 
-	// Rollup worker + HTTP server + MCP server all run alongside each other.
-	// They all die when ctx is cancelled. We wait for every goroutine to
-	// drain before returning so the deferred adapter.Close is safe.
+	if cfg.Server.MCPPortSet {
+		log.Warn("mcp_port is deprecated and ignored — MCP is now served on the main HTTP port; remove mcp_port from your config / BEACON_MCP_PORT from your environment", "mcp_port", cfg.Server.MCPPort)
+	}
+
+	// Rollup worker + HTTP server run alongside each other. They both die
+	// when ctx is cancelled. We wait for every goroutine to drain before
+	// returning so the deferred adapter.Close is safe.
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -186,17 +189,8 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		}
 	}()
 
-	mcpDone := make(chan struct{})
-	go func() {
-		defer close(mcpDone)
-		if err := mcpSrv.Run(ctx); err != nil {
-			log.Error("mcp server exited with error", "err", err)
-		}
-	}()
-
 	runErr := srv.Run(ctx)
 	<-workerDone
-	<-mcpDone
 	if runErr != nil {
 		log.Error("server exited with error", "err", runErr)
 		return 1

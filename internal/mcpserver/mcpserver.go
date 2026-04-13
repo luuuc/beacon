@@ -1,10 +1,10 @@
 // Package mcpserver exposes Beacon's read path as an MCP (Model Context
-// Protocol) server over JSON-RPC 2.0 on a dedicated port.
+// Protocol) handler over JSON-RPC 2.0.
 //
 // This is a minimal subset of MCP — enough for a client to discover and
 // invoke tools — without the full SSE/session machinery the spec defines
-// for streaming transports. Each POST /rpc carries one JSON-RPC request
-// and returns one JSON-RPC response, synchronously.
+// for streaming transports. Each POST carries one JSON-RPC request and
+// returns one JSON-RPC response, synchronously.
 //
 // Supported methods:
 //
@@ -29,9 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/luuuc/beacon/internal/beacondb"
@@ -41,18 +39,21 @@ import (
 	"github.com/luuuc/beacon/internal/version"
 )
 
+// Config holds the settings for the MCP handler. Bind and Port are no
+// longer needed — the MCP handler is mounted on the main HTTP server.
 type Config struct {
-	Bind      string
-	Port      int
 	AuthToken string
 }
 
+// Server is an MCP handler provider. It builds HTTP handlers for the MCP
+// JSON-RPC endpoint but does not own a listener — the main server mounts
+// the handler and owns the socket.
 type Server struct {
 	cfg     Config
 	reads   *reads.Handler
 	worker  *rollup.Worker
 	log     *slog.Logger
-	http    *http.Server
+	handler http.Handler
 	tools   []toolDef
 	toolMap map[string]toolDef
 }
@@ -66,8 +67,9 @@ type toolDef struct {
 
 type toolHandler func(ctx context.Context, args json.RawMessage) (any, error)
 
-// New builds the MCP server. It registers the six tools but does not bind
-// a listener until Run is called.
+// New builds the MCP handler. It registers tools but does not own a
+// listener — call Handler() to get the http.Handler and mount it on the
+// main server's mux.
 func New(cfg Config, readsH *reads.Handler, worker *rollup.Worker, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
@@ -80,49 +82,13 @@ func New(cfg Config, readsH *reads.Handler, worker *rollup.Worker, log *slog.Log
 		toolMap: map[string]toolDef{},
 	}
 	s.registerTools()
-	mux := http.NewServeMux()
-	mux.Handle("GET /healthz", http.HandlerFunc(s.handleHealthz))
-	mux.Handle("POST /rpc", http.HandlerFunc(s.handleRPC))
-	s.http = &http.Server{
-		Addr:              net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port)),
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	s.handler = http.HandlerFunc(s.handleRPC)
 	return s
 }
 
-// Addr is the bound address for log messages and tests.
-func (s *Server) Addr() string { return s.http.Addr }
-
-// Handler exposes the mux for in-process testing.
-func (s *Server) Handler() http.Handler { return s.http.Handler }
-
-// Run starts the listener and blocks until ctx is cancelled.
-func (s *Server) Run(ctx context.Context) error {
-	ln, err := net.Listen("tcp", s.http.Addr)
-	if err != nil {
-		return fmt.Errorf("mcp listen %s: %w", s.http.Addr, err)
-	}
-	s.log.Info("mcp listener up", "addr", ln.Addr().String(), "tools", len(s.tools))
-
-	errCh := make(chan error, 1)
-	go func() {
-		err := s.http.Serve(ln)
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
-		}
-		errCh <- err
-	}()
-	select {
-	case <-ctx.Done():
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.http.Shutdown(shutCtx)
-		return <-errCh
-	case err := <-errCh:
-		return err
-	}
-}
+// Handler returns the MCP JSON-RPC handler. The caller mounts it on the
+// desired path (e.g. POST /mcp/rpc) and owns the listener.
+func (s *Server) Handler() http.Handler { return s.handler }
 
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 envelope
@@ -155,10 +121,6 @@ const (
 	errInvalidParams  = -32602
 	errInternal       = -32603
 )
-
-func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
 
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.AuthToken != "" && !httputil.CheckBearer(r.Header.Get("Authorization"), s.cfg.AuthToken) {
