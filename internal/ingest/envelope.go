@@ -64,9 +64,9 @@ func (e *envelopeJSON) toEvent(now time.Time) (beacondb.Event, []string, error) 
 
 	kind := beacondb.Kind(e.Kind)
 	switch kind {
-	case beacondb.KindOutcome, beacondb.KindPerf, beacondb.KindError:
+	case beacondb.KindOutcome, beacondb.KindPerf, beacondb.KindError, beacondb.KindAmbient:
 	default:
-		return beacondb.Event{}, nil, fmt.Errorf("kind must be outcome, perf, or error (got %q)", e.Kind)
+		return beacondb.Event{}, nil, fmt.Errorf("kind must be outcome, perf, error, or ambient (got %q)", e.Kind)
 	}
 
 	if e.Name == "" {

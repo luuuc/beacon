@@ -16,6 +16,18 @@ type Config struct {
 	Rollup    RollupConfig    `yaml:"rollup"`
 	Baseline  BaselineConfig  `yaml:"baseline"`
 	Ingest    IngestConfig    `yaml:"ingest"`
+	Ambient   AmbientConfig   `yaml:"ambient"`
+}
+
+type AmbientConfig struct {
+	Anomaly AnomalyConfig `yaml:"anomaly"`
+}
+
+type AnomalyConfig struct {
+	BaselineWindow  string  `yaml:"baseline_window"`
+	DetectionWindow string  `yaml:"detection_window"`
+	SigmaThreshold  float64 `yaml:"sigma_threshold"`
+	MinVolume       int     `yaml:"min_volume"`
 }
 
 type IngestConfig struct {
@@ -53,8 +65,9 @@ type DatabaseConfig struct {
 }
 
 type RetentionConfig struct {
-	EventsDays      int `yaml:"events_days"`
-	RollupsHourDays int `yaml:"rollups_hour_days"`
+	EventsDays        int `yaml:"events_days"`
+	AmbientRetentionHours int `yaml:"ambient_retention_hours"`
+	RollupsHourDays   int `yaml:"rollups_hour_days"`
 }
 
 type RollupConfig struct {
@@ -74,13 +87,22 @@ func Defaults() Config {
 			HTTPPort: 4680,
 		},
 		Retention: RetentionConfig{
-			EventsDays:      14,
-			RollupsHourDays: 90,
+			EventsDays:         14,
+			AmbientRetentionHours: 24,
+			RollupsHourDays:    90,
 		},
 		Rollup: RollupConfig{
 			TickSeconds: 60,
 			PruneAt:     "03:00",
 			Timezone:    "UTC",
+		},
+		Ambient: AmbientConfig{
+			Anomaly: AnomalyConfig{
+				BaselineWindow:  "14d",
+				DetectionWindow: "24h",
+				SigmaThreshold:  2.0,
+				MinVolume:       10,
+			},
 		},
 		Baseline: BaselineConfig{
 			Windows: []string{"24h", "7d", "30d"},
@@ -214,6 +236,9 @@ func mergeNonZero(dst, src *Config) {
 	if src.Retention.EventsDays != 0 {
 		dst.Retention.EventsDays = src.Retention.EventsDays
 	}
+	if src.Retention.AmbientRetentionHours != 0 {
+		dst.Retention.AmbientRetentionHours = src.Retention.AmbientRetentionHours
+	}
 	if src.Retention.RollupsHourDays != 0 {
 		dst.Retention.RollupsHourDays = src.Retention.RollupsHourDays
 	}
@@ -234,6 +259,18 @@ func mergeNonZero(dst, src *Config) {
 	}
 	if src.Ingest.IdempMaxEntries != 0 {
 		dst.Ingest.IdempMaxEntries = src.Ingest.IdempMaxEntries
+	}
+	if src.Ambient.Anomaly.BaselineWindow != "" {
+		dst.Ambient.Anomaly.BaselineWindow = src.Ambient.Anomaly.BaselineWindow
+	}
+	if src.Ambient.Anomaly.DetectionWindow != "" {
+		dst.Ambient.Anomaly.DetectionWindow = src.Ambient.Anomaly.DetectionWindow
+	}
+	if src.Ambient.Anomaly.SigmaThreshold != 0 {
+		dst.Ambient.Anomaly.SigmaThreshold = src.Ambient.Anomaly.SigmaThreshold
+	}
+	if src.Ambient.Anomaly.MinVolume != 0 {
+		dst.Ambient.Anomaly.MinVolume = src.Ambient.Anomaly.MinVolume
 	}
 }
 

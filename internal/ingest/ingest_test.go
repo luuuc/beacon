@@ -74,6 +74,12 @@ func TestAccepted202(t *testing.T) {
 			"created_at": fixedNow.Format(time.RFC3339),
 			"properties": map[string]any{"fingerprint": "abc123", "message": "boom"},
 		},
+		map[string]any{
+			"kind":       "ambient",
+			"name":       "http_request",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"path": "/search", "method": "GET", "status": 200, "country": "US"},
+		},
 	)
 	rec := doPost(t, h, body, nil)
 	if rec.Code != http.StatusAccepted {
@@ -81,8 +87,8 @@ func TestAccepted202(t *testing.T) {
 	}
 	var resp map[string]any
 	mustDecode(t, rec.Body.Bytes(), &resp)
-	if resp["received"].(float64) != 3 {
-		t.Errorf("received = %v, want 3", resp["received"])
+	if resp["received"].(float64) != 4 {
+		t.Errorf("received = %v, want 4", resp["received"])
 	}
 
 	// Verify the fake actually got the rows and the kind-specific lifts.
@@ -105,6 +111,17 @@ func TestAccepted202(t *testing.T) {
 	if len(errs) != 1 || errs[0].Fingerprint != "abc123" {
 		t.Errorf("errors fingerprint not lifted: %+v", errs)
 	}
+	ambients, _ := fake.ListEvents(ctx, beacondb.EventFilter{Kind: beacondb.KindAmbient})
+	if len(ambients) != 1 {
+		t.Fatalf("ambients = %+v", ambients)
+	}
+	if ambients[0].Name != "http_request" {
+		t.Errorf("ambient name = %q, want http_request", ambients[0].Name)
+	}
+	// Ambient events keep all properties intact (no field lifting).
+	if ambients[0].Properties["country"] != "US" {
+		t.Errorf("ambient properties.country not preserved: %+v", ambients[0].Properties)
+	}
 }
 
 func TestBadRequest400(t *testing.T) {
@@ -121,7 +138,7 @@ func TestBadRequest400(t *testing.T) {
 		{
 			"unknown kind",
 			[]map[string]any{{"kind": "banana", "name": "x", "created_at": fixedNow.Format(time.RFC3339)}},
-			"kind must be outcome, perf, or error",
+			"kind must be outcome, perf, error, or ambient",
 		},
 		{
 			"missing name",
