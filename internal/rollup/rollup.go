@@ -30,10 +30,11 @@ import (
 )
 
 type Config struct {
-	TickInterval time.Duration  // default 60s
-	RetentionRaw time.Duration  // default 14 days
-	PruneAt      string         // "HH:MM" in Timezone; default "03:00"
-	Timezone     *time.Location // default UTC
+	TickInterval     time.Duration  // default 60s
+	RetentionRaw     time.Duration  // default 14 days
+	AmbientRetention time.Duration  // default 24h; ambient events prune earlier than standard
+	PruneAt          string         // "HH:MM" in Timezone; default "03:00"
+	Timezone         *time.Location // default UTC
 	// Now overrides the worker's clock. Leave nil in production; tests
 	// inject a fixed function to exercise boundary logic deterministically.
 	Now func() time.Time
@@ -45,6 +46,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.RetentionRaw <= 0 {
 		c.RetentionRaw = 14 * 24 * time.Hour
+	}
+	if c.AmbientRetention <= 0 {
+		c.AmbientRetention = 24 * time.Hour
 	}
 	if c.PruneAt == "" {
 		c.PruneAt = "03:00"
@@ -163,7 +167,31 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 	}
 
 	// Daily prune runs at most once per calendar day in the configured TZ.
+	// Two-tier retention: ambient events prune at AmbientRetention (default
+	// 24h), all other kinds at RetentionRaw (default 14d).
 	if w.shouldPrune(now) {
+		// Ambient events: short retention (24h default).
+		ambientCutoff := now.Add(-w.cfg.AmbientRetention)
+		an, aerr := w.adapter.DeleteEventsByKindOlderThan(ctx, beacondb.KindAmbient, ambientCutoff)
+		if aerr != nil {
+			w.log.Error("prune ambient events",
+				"event", "prune_failure",
+				"kind", "ambient",
+				"cutoff_utc", ambientCutoff.Format(time.RFC3339),
+				"err", aerr,
+			)
+		} else if an > 0 {
+			w.log.Info("pruned ambient events",
+				"event", "prune_completed",
+				"kind", "ambient",
+				"deleted", an,
+				"cutoff_utc", ambientCutoff.Format(time.RFC3339),
+			)
+		}
+
+		// Standard events: standard retention (14d default). This also acts
+		// as a backstop for ambient events if the kind-filtered prune above
+		// failed — any ambient event older than 14d will be caught here.
 		cutoff := now.Add(-w.cfg.RetentionRaw)
 		n, err := w.adapter.DeleteEventsOlderThan(ctx, cutoff)
 		if err != nil {

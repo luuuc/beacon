@@ -128,10 +128,11 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		tz = time.UTC
 	}
 	worker := rollup.NewWorker(rollup.Config{
-		TickInterval: time.Duration(cfg.Rollup.TickSeconds) * time.Second,
-		RetentionRaw: time.Duration(cfg.Retention.EventsDays) * 24 * time.Hour,
-		PruneAt:      cfg.Rollup.PruneAt,
-		Timezone:     tz,
+		TickInterval:     time.Duration(cfg.Rollup.TickSeconds) * time.Second,
+		RetentionRaw:     time.Duration(cfg.Retention.EventsDays) * 24 * time.Hour,
+		AmbientRetention: time.Duration(cfg.Retention.AmbientRetentionHours) * time.Hour,
+		PruneAt:          cfg.Rollup.PruneAt,
+		Timezone:         tz,
 	}, adapter, log)
 
 	log.Info("beacon starting",

@@ -371,6 +371,59 @@ func TestPrune_cutoffBoundary(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Two-tier retention (ambient vs standard)
+// ---------------------------------------------------------------------------
+
+func TestPrune_twoTierRetention(t *testing.T) {
+	// Prune at 03:00 UTC. "Now" is 03:05 UTC, so prune fires.
+	// Ambient retention: 24h. Standard retention: 14d.
+	now := time.Date(2026, 4, 10, 3, 5, 0, 0, time.UTC)
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWorker(Config{
+		TickInterval:     time.Minute,
+		RetentionRaw:     14 * 24 * time.Hour,
+		AmbientRetention: 24 * time.Hour,
+		PruneAt:          "03:00",
+		Timezone:         time.UTC,
+	}, fake, nil)
+	w.now = func() time.Time { return now }
+
+	seedEvents(t, fake,
+		// Ambient event 2 days old — should be pruned (>24h).
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "http_request", CreatedAt: now.Add(-48 * time.Hour)},
+		// Ambient event 12 hours old — should survive (<24h).
+		beacondb.Event{Kind: beacondb.KindAmbient, Name: "http_request", CreatedAt: now.Add(-12 * time.Hour)},
+		// Perf event 2 days old — should survive (within 14d).
+		beacondb.Event{Kind: beacondb.KindPerf, Name: "GET /", DurationMs: dur(100), CreatedAt: now.Add(-48 * time.Hour)},
+		// Outcome event 20 days old — should be pruned (>14d).
+		beacondb.Event{Kind: beacondb.KindOutcome, Name: "signup", CreatedAt: now.Add(-20 * 24 * time.Hour)},
+	)
+
+	if err := w.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	remaining, _ := fake.ListEvents(context.Background(), beacondb.EventFilter{})
+	if len(remaining) != 2 {
+		t.Fatalf("remaining = %d, want 2 (ambient@12h, perf@2d)", len(remaining))
+	}
+
+	byKind := map[beacondb.Kind]int{}
+	for _, e := range remaining {
+		byKind[e.Kind]++
+	}
+	if byKind[beacondb.KindAmbient] != 1 {
+		t.Errorf("ambient remaining = %d, want 1", byKind[beacondb.KindAmbient])
+	}
+	if byKind[beacondb.KindPerf] != 1 {
+		t.Errorf("perf remaining = %d, want 1", byKind[beacondb.KindPerf])
+	}
+}
+
+// ---------------------------------------------------------------------------
 // LastTick advancement
 // ---------------------------------------------------------------------------
 
