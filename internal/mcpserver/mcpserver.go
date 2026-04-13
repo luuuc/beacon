@@ -323,6 +323,18 @@ func (s *Server) registerTools() {
 		}`),
 		handler: s.toolDeployBaseline,
 	})
+
+	s.register(toolDef{
+		Name:        "beacon.anomalies",
+		Description: "List recent anomalies detected by the sigma-threshold detector. Returns volume shifts and dimension spikes sorted by deviation severity.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"since": {"type": "string", "description": "Window (duration or Nd). Default 24h."}
+			}
+		}`),
+		handler: s.toolAnomalies,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +455,20 @@ func (s *Server) toolDeployBaseline(ctx context.Context, args json.RawMessage) (
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 	return s.reads.GetDeployBaseline(ctx, beacondb.Kind(p.Kind), p.Name)
+}
+
+func (s *Server) toolAnomalies(ctx context.Context, args json.RawMessage) (any, error) {
+	var p struct {
+		Since string `json:"since"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	window, err := optionalWindow(p.Since)
+	if err != nil {
+		return nil, err
+	}
+	return s.reads.GetAnomalies(ctx, reads.GetAnomaliesRequest{Since: window})
 }
 
 // optionalWindow parses a window string, treating empty as "let the callee

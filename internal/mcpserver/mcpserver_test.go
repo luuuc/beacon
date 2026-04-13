@@ -118,12 +118,13 @@ func TestToolsList(t *testing.T) {
 	}
 	m := resp.Result.(map[string]any)
 	tools := m["tools"].([]any)
-	if len(tools) != 6 {
-		t.Fatalf("tools = %d, want 6", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("tools = %d, want 7", len(tools))
 	}
 	want := map[string]bool{
 		"beacon.metric": false, "beacon.errors": false, "beacon.perf_drift": false,
 		"beacon.compare": false, "beacon.outcome_check": false, "beacon.deploy_baseline": false,
+		"beacon.anomalies": false,
 	}
 	for _, raw := range tools {
 		tool := raw.(map[string]any)
@@ -372,5 +373,31 @@ func TestAuthRequired(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("code = %d", rec.Code)
+	}
+}
+
+func TestToolAnomalies_matchesHTTPSibling(t *testing.T) {
+	srv, fake := newTestStack(t)
+	_ = fake.UpsertMetrics(context.Background(), []beacondb.Metric{
+		{Kind: beacondb.KindAmbient, Name: "http_request",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 100, Sum: fp(5.0), P50: fp(10), P95: fp(1),
+			Fingerprint: "volume_shift"},
+	})
+
+	httpResp, _ := srv.reads.GetAnomalies(context.Background(), reads.GetAnomaliesRequest{Since: 24 * time.Hour})
+
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.anomalies",
+		"arguments": map[string]any{"since": "24h"},
+	})
+	var viaMCP reads.AnomaliesResponse
+	toolResultText(t, resp, &viaMCP)
+
+	a, _ := json.Marshal(httpResp)
+	b, _ := json.Marshal(&viaMCP)
+	if string(a) != string(b) {
+		t.Errorf("MCP != HTTP:\n  http: %s\n  mcp:  %s", a, b)
 	}
 }

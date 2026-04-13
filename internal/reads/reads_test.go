@@ -494,3 +494,101 @@ func TestMeanStddev(t *testing.T) {
 		t.Errorf("stddev = %v, want ~15.81", s)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Anomalies
+// ---------------------------------------------------------------------------
+
+func TestGetAnomalies_returnsSeededAnomalies(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	// Seed two anomaly records.
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindAmbient, Name: "http_request",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 100, Sum: fp(12.4), P50: fp(10), P95: fp(0.5),
+		Fingerprint: "volume_shift", DimensionHash: "",
+	})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindAmbient, Name: "signup.completed",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart:   fixedNow.Add(-2 * time.Hour),
+		Count:         47,
+		Sum:           fp(8.1),
+		P50:           fp(3),
+		P95:           fp(1.2),
+		Fingerprint:   "dimension_spike",
+		Dimensions:    map[string]any{"country": "US"},
+		DimensionHash: "abc",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Anomalies) != 2 {
+		t.Fatalf("anomalies = %d, want 2", len(resp.Anomalies))
+	}
+	// Sorted by deviation descending: 12.4 first, 8.1 second.
+	if resp.Anomalies[0].DeviationSigma != 12.4 {
+		t.Errorf("first deviation = %v, want 12.4", resp.Anomalies[0].DeviationSigma)
+	}
+	if resp.Anomalies[0].AnomalyKind != "volume_shift" {
+		t.Errorf("first kind = %q, want volume_shift", resp.Anomalies[0].AnomalyKind)
+	}
+	if resp.Anomalies[1].AnomalyKind != "dimension_spike" {
+		t.Errorf("second kind = %q, want dimension_spike", resp.Anomalies[1].AnomalyKind)
+	}
+	if resp.Anomalies[1].Dimension["country"] != "US" {
+		t.Errorf("second dimension = %+v, want {country: US}", resp.Anomalies[1].Dimension)
+	}
+}
+
+func TestHandleAnomalies_HTTP(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /search",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 200, Sum: fp(5.0), P50: fp(20), P95: fp(2),
+		Fingerprint: "volume_shift", DimensionHash: "",
+	})
+
+	m := mux(h)
+	req := httptest.NewRequest(http.MethodGet, "/api/anomalies?since=7d", nil)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var resp AnomaliesResponse
+	mustJSON(t, rec.Body.Bytes(), &resp)
+	if len(resp.Anomalies) != 1 {
+		t.Fatalf("anomalies = %d, want 1", len(resp.Anomalies))
+	}
+	if resp.Anomalies[0].Name != "GET /search" {
+		t.Errorf("name = %q, want GET /search", resp.Anomalies[0].Name)
+	}
+	if resp.Anomalies[0].Current != 200 {
+		t.Errorf("current = %d, want 200", resp.Anomalies[0].Current)
+	}
+}
+
+func TestHandleAnomalies_emptyResponse(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	m := mux(h)
+	req := httptest.NewRequest(http.MethodGet, "/api/anomalies", nil)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp AnomaliesResponse
+	mustJSON(t, rec.Body.Bytes(), &resp)
+	if len(resp.Anomalies) != 0 {
+		t.Errorf("anomalies = %d, want 0", len(resp.Anomalies))
+	}
+}

@@ -81,6 +81,7 @@ func (h *Handler) Mount(mux interface {
 	mux.Handle("GET /api/metrics/{name}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleMetric)))
 	mux.Handle("GET /api/errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
 	mux.Handle("GET /api/perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
+	mux.Handle("GET /api/anomalies", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleAnomalies)))
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +700,104 @@ func (h *Handler) GetOutcomeSummaries(ctx context.Context, window time.Duration)
 		return math.Abs(out[i].DriftPercent) > math.Abs(out[j].DriftPercent)
 	})
 	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetAnomalies
+// ---------------------------------------------------------------------------
+
+// AnomaliesResponse is the GET /api/anomalies response.
+type AnomaliesResponse struct {
+	Anomalies []AnomalyEntry `json:"anomalies"`
+}
+
+// AnomalyEntry is one anomaly in the response.
+type AnomalyEntry struct {
+	AnomalyKind    string         `json:"anomaly_kind"`
+	MetricKind     string         `json:"metric_kind"`
+	Name           string         `json:"name"`
+	Dimension      map[string]any `json:"dimension,omitempty"`
+	Current        int64          `json:"current"`
+	BaselineMean   float64        `json:"baseline_mean"`
+	BaselineStddev float64        `json:"baseline_stddev"`
+	DeviationSigma float64        `json:"deviation_sigma"`
+	FirstDetected  string         `json:"first_detected"`
+	Summary        string         `json:"summary"`
+}
+
+// GetAnomaliesRequest is the typed input for GetAnomalies.
+type GetAnomaliesRequest struct {
+	Since time.Duration // 0 = 24h default
+}
+
+// GetAnomalies returns recent anomaly records. This is the shared query path
+// for GET /api/anomalies and the MCP beacon.anomalies tool.
+func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*AnomaliesResponse, error) {
+	if req.Since == 0 {
+		req.Since = 24 * time.Hour
+	}
+	now := h.now().UTC()
+	cutoff := now.Add(-req.Since)
+
+	rows, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
+		PeriodKind: beacondb.PeriodAnomaly,
+		Since:      cutoff,
+		Until:      now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list anomalies: %w", err)
+	}
+
+	entries := make([]AnomalyEntry, 0, len(rows))
+	for _, m := range rows {
+		var deviation, mean, stddev float64
+		if m.Sum != nil {
+			deviation = *m.Sum
+		}
+		if m.P50 != nil {
+			mean = *m.P50
+		}
+		if m.P95 != nil {
+			stddev = *m.P95
+		}
+
+		summary := fmt.Sprintf("%s %s: %d in 24h vs baseline of %.0f",
+			m.Name, m.Fingerprint, m.Count, mean)
+
+		entries = append(entries, AnomalyEntry{
+			AnomalyKind:    m.Fingerprint,
+			MetricKind:     string(m.Kind),
+			Name:           m.Name,
+			Dimension:      m.Dimensions,
+			Current:        m.Count,
+			BaselineMean:   mean,
+			BaselineStddev: stddev,
+			DeviationSigma: deviation,
+			FirstDetected:  m.PeriodStart.Format(time.RFC3339),
+			Summary:        summary,
+		})
+	}
+
+	// Sort by deviation descending (most significant first).
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].DeviationSigma > entries[j].DeviationSigma
+	})
+
+	return &AnomaliesResponse{Anomalies: entries}, nil
+}
+
+func (h *Handler) handleAnomalies(w http.ResponseWriter, r *http.Request) {
+	window, err := parseWindow(strOr(r.URL.Query().Get("since"), "24h"))
+	if err != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, "since: "+err.Error())
+		return
+	}
+	resp, err := h.GetAnomalies(r.Context(), GetAnomaliesRequest{Since: window})
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // ---------------------------------------------------------------------------
