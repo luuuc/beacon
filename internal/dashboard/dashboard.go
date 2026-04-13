@@ -9,9 +9,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/luuuc/beacon/internal/reads"
+	"github.com/luuuc/beacon/internal/version"
 )
 
 //go:embed templates static
@@ -38,7 +40,8 @@ func New(cfg Config, readsH *reads.Handler, log *slog.Logger) *Dashboard {
 		log = slog.Default()
 	}
 	funcMap := template.FuncMap{
-		"sparkline": SparklineSVG,
+		"sparkline":  SparklineSVG,
+		"pathEscape": url.PathEscape,
 	}
 
 	// Parse layout + partials as the base set. Each page clones this
@@ -105,9 +108,16 @@ func (d *Dashboard) Mount(mux interface {
 	mux.Handle("GET /outcomes", auth(http.HandlerFunc(d.handleOutcomes)))
 	mux.Handle("GET /outcomes/{name}", auth(http.HandlerFunc(d.handleOutcomeDetail)))
 	mux.Handle("GET /performance", auth(http.HandlerFunc(d.handlePerformance)))
-	mux.Handle("GET /performance/{name}", auth(http.HandlerFunc(d.handlePerformanceDetail)))
+	mux.Handle("GET /performance/{name...}", auth(http.HandlerFunc(d.handlePerformanceDetail)))
 	mux.Handle("GET /errors", auth(http.HandlerFunc(d.handleErrors)))
 	mux.Handle("GET /errors/{fingerprint}", auth(http.HandlerFunc(d.handleErrorDetail)))
+}
+
+// pageData creates a template data map pre-filled with the Version field.
+// Handlers merge their own keys into the returned map.
+func pageData(m map[string]any) map[string]any {
+	m["Version"] = version.Version
+	return m
 }
 
 // render executes a full-page template, or just the partial block if the

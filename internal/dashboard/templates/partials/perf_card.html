@@ -1,5 +1,5 @@
 {{define "perf_card.html"}}
-<a href="/performance/{{.Name}}" class="card">
+<a href="/performance/{{pathEscape .Name}}" class="card">
   <div class="card-name">{{.Name}}</div>
   <div class="card-sparkline">{{.Sparkline}}</div>
   <div class="card-metrics">
