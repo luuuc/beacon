@@ -56,6 +56,7 @@ const (
 	PeriodDay      PeriodKind = "day"
 	PeriodWeek     PeriodKind = "week"
 	PeriodBaseline PeriodKind = "baseline"
+	PeriodAnomaly  PeriodKind = "anomaly"
 )
 
 // Event is one raw row of beacon_events. Pointer fields are nullable in SQL.

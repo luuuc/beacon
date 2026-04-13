@@ -35,9 +35,18 @@ type Config struct {
 	AmbientRetention time.Duration  // default 24h; ambient events prune earlier than standard
 	PruneAt          string         // "HH:MM" in Timezone; default "03:00"
 	Timezone         *time.Location // default UTC
+	Anomaly          AnomalyConfig  // anomaly detector settings
 	// Now overrides the worker's clock. Leave nil in production; tests
 	// inject a fixed function to exercise boundary logic deterministically.
 	Now func() time.Time
+}
+
+// AnomalyConfig controls the sigma-threshold anomaly detector.
+type AnomalyConfig struct {
+	BaselineWindow  time.Duration // default 14d; trailing window for baseline computation
+	DetectionWindow time.Duration // default 24h; current window to compare against baseline
+	SigmaThreshold  float64       // default 2.0; sigma deviation to trigger anomaly
+	MinVolume       int64         // default 10; suppress anomalies on low-traffic metrics
 }
 
 func (c Config) withDefaults() Config {
@@ -49,6 +58,18 @@ func (c Config) withDefaults() Config {
 	}
 	if c.AmbientRetention <= 0 {
 		c.AmbientRetention = 24 * time.Hour
+	}
+	if c.Anomaly.BaselineWindow <= 0 {
+		c.Anomaly.BaselineWindow = 14 * 24 * time.Hour
+	}
+	if c.Anomaly.DetectionWindow <= 0 {
+		c.Anomaly.DetectionWindow = 24 * time.Hour
+	}
+	if c.Anomaly.SigmaThreshold <= 0 {
+		c.Anomaly.SigmaThreshold = 2.0
+	}
+	if c.Anomaly.MinVolume <= 0 {
+		c.Anomaly.MinVolume = 10
 	}
 	if c.PruneAt == "" {
 		c.PruneAt = "03:00"
@@ -70,8 +91,9 @@ type Worker struct {
 
 	// Clock and persistent tick state (guarded by the caller's single-
 	// goroutine Run loop; no extra locking needed).
-	now           func() time.Time
-	lastPruneDate string
+	now              func() time.Time
+	lastPruneDate    string
+	lastAnomalyDate  string
 	// hourlyDoneFor is the hour bucket for which hourly-boundary work
 	// (previous-hour aggregation + trailing baselines) has already run.
 	// Zero until the first tick, then advances once per wall-clock hour.
@@ -208,6 +230,16 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 				"event", "prune_completed",
 				"deleted", n,
 				"cutoff_utc", cutoff.Format(time.RFC3339),
+			)
+		}
+	}
+
+	// Anomaly detection runs once per day, after pruning completes.
+	if w.shouldDetectAnomalies(now) {
+		if err := w.detectAnomalies(ctx); err != nil {
+			w.log.Error("anomaly detection",
+				"event", "anomaly_detection_failure",
+				"err", err,
 			)
 		}
 	}
