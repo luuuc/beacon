@@ -791,6 +791,196 @@ func TestAnomalySummary_zeroMeanFallback(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// GetErrorDetail
+// ---------------------------------------------------------------------------
+
+func seedEvent(t *testing.T, fake *memfake.Fake, ev beacondb.Event) {
+	t.Helper()
+	if _, err := fake.InsertEvents(context.Background(), []beacondb.Event{ev}); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+}
+
+func TestGetErrorDetail_happyPath(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	fp := "abc123fingerprint"
+
+	// Seed hourly metrics for the fingerprint.
+	hour1 := fixedNow.Add(-3 * time.Hour).Truncate(time.Hour)
+	hour2 := fixedNow.Add(-1 * time.Hour).Truncate(time.Hour)
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "NoMethodError",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: hour1, Count: 2, Fingerprint: fp,
+	})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "NoMethodError",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: hour2, Count: 1, Fingerprint: fp,
+	})
+
+	// Seed a raw error event.
+	seedEvent(t, fake, beacondb.Event{
+		Kind:        beacondb.KindError,
+		Name:        "NoMethodError",
+		Fingerprint: fp,
+		Properties: map[string]any{
+			"message":         "undefined method 'title' for nil",
+			"first_app_frame": "app/models/item.rb:42",
+			"stack_trace":     "app/models/item.rb:42:in 'title'\napp/views/items/show.html.erb:7",
+		},
+		Context: map[string]any{
+			"request_id":  "req-001",
+			"deploy_sha":  "deadbeef",
+			"environment": "production",
+		},
+		CreatedAt: fixedNow.Add(-2 * time.Hour),
+	})
+
+	resp, err := h.GetErrorDetail(context.Background(), fp)
+	if err != nil {
+		t.Fatalf("GetErrorDetail: %v", err)
+	}
+
+	if resp.Fingerprint != fp {
+		t.Errorf("fingerprint = %q, want %q", resp.Fingerprint, fp)
+	}
+	if resp.Name != "NoMethodError" {
+		t.Errorf("name = %q", resp.Name)
+	}
+	if resp.Occurrences != 3 {
+		t.Errorf("occurrences = %d, want 3", resp.Occurrences)
+	}
+	if len(resp.HourlyOccurrences) != 2 {
+		t.Errorf("hourly len = %d, want 2", len(resp.HourlyOccurrences))
+	}
+
+	// Sample event fields.
+	if resp.SampleEvent == nil {
+		t.Fatal("sample_event is nil")
+	}
+	if resp.SampleEvent.Message != "undefined method 'title' for nil" {
+		t.Errorf("message = %q", resp.SampleEvent.Message)
+	}
+	if resp.SampleEvent.FirstAppFrame != "app/models/item.rb:42" {
+		t.Errorf("first_app_frame = %q", resp.SampleEvent.FirstAppFrame)
+	}
+	if resp.SampleEvent.StackTrace == "" {
+		t.Error("stack_trace is empty")
+	}
+	if resp.SampleEvent.Context["deploy_sha"] != "deadbeef" {
+		t.Errorf("deploy_sha = %v", resp.SampleEvent.Context["deploy_sha"])
+	}
+}
+
+func TestGetErrorDetail_mostRecentEventWins(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	fp := "multi-event-fp"
+
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "RuntimeError",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-2 * time.Hour).Truncate(time.Hour),
+		Count: 2, Fingerprint: fp,
+	})
+
+	// Older event — should NOT be returned.
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: fp,
+		Properties: map[string]any{
+			"message":         "old error message",
+			"first_app_frame": "app/old.rb:1",
+			"stack_trace":     "old trace",
+		},
+		Context:   map[string]any{"deploy_sha": "old-sha"},
+		CreatedAt: fixedNow.Add(-6 * time.Hour),
+	})
+	// Newer event — should be returned.
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: fp,
+		Properties: map[string]any{
+			"message":         "new error message",
+			"first_app_frame": "app/new.rb:99",
+			"stack_trace":     "new trace",
+		},
+		Context:   map[string]any{"deploy_sha": "new-sha"},
+		CreatedAt: fixedNow.Add(-1 * time.Hour),
+	})
+
+	resp, err := h.GetErrorDetail(context.Background(), fp)
+	if err != nil {
+		t.Fatalf("GetErrorDetail: %v", err)
+	}
+	if resp.SampleEvent == nil {
+		t.Fatal("sample_event is nil")
+	}
+	if resp.SampleEvent.Message != "new error message" {
+		t.Errorf("message = %q, want newest event", resp.SampleEvent.Message)
+	}
+	if resp.SampleEvent.FirstAppFrame != "app/new.rb:99" {
+		t.Errorf("first_app_frame = %q, want newest event", resp.SampleEvent.FirstAppFrame)
+	}
+	if resp.SampleEvent.Context["deploy_sha"] != "new-sha" {
+		t.Errorf("deploy_sha = %v, want new-sha", resp.SampleEvent.Context["deploy_sha"])
+	}
+}
+
+func TestGetErrorDetail_pruned(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	fp := "pruned123"
+
+	// Seed metrics but NO raw events (simulating pruned retention).
+	hour := fixedNow.Add(-2 * time.Hour).Truncate(time.Hour)
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "TimeoutError",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: hour, Count: 5, Fingerprint: fp,
+	})
+
+	resp, err := h.GetErrorDetail(context.Background(), fp)
+	if err != nil {
+		t.Fatalf("GetErrorDetail: %v", err)
+	}
+
+	if resp.Fingerprint != fp {
+		t.Errorf("fingerprint = %q", resp.Fingerprint)
+	}
+	if resp.Name != "TimeoutError" {
+		t.Errorf("name = %q", resp.Name)
+	}
+	if resp.Occurrences != 5 {
+		t.Errorf("occurrences = %d, want 5", resp.Occurrences)
+	}
+	if resp.SampleEvent != nil {
+		t.Errorf("sample_event should be nil (pruned), got %+v", resp.SampleEvent)
+	}
+}
+
+func TestGetErrorDetail_notFound(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+
+	_, err := h.GetErrorDetail(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown fingerprint")
+	}
+	if !errors.Is(err, beacondb.ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGetErrorDetail_emptyFingerprint(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+
+	_, err := h.GetErrorDetail(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty fingerprint")
+	}
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Errorf("error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func TestHandleAnomalies_emptyResponse(t *testing.T) {
 	h, _ := newTestHandler(t, Config{})
 	m := mux(h)

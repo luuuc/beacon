@@ -132,6 +132,34 @@ type ErrorSummary struct {
 	Occurrences int64  `json:"occurrences"`
 }
 
+// ErrorDetailResponse is the investigation payload for a single error
+// fingerprint. Used by the MCP beacon.error_detail tool and the dashboard
+// error detail page. When the sample raw event has been pruned,
+// SampleEvent is nil and only the rollup fields are populated.
+//
+// FirstSeen/LastSeen reflect the 7-day query window, not all-time. An
+// error active for 30 days will show first_seen as 7 days ago.
+type ErrorDetailResponse struct {
+	Fingerprint       string             `json:"fingerprint"`
+	Name              string             `json:"name"`
+	FirstSeen         string             `json:"first_seen"`
+	LastSeen          string             `json:"last_seen"`
+	Occurrences       int64              `json:"occurrences"`
+	HourlyOccurrences []MetricPoint      `json:"hourly_occurrences"`
+	SampleEvent       *ErrorDetailSample `json:"sample_event"`
+}
+
+// ErrorDetailSample holds the fields extracted from a raw error event.
+// When non-nil, the sample event is available; when nil, the raw event
+// has been pruned and only rollup data is present.
+type ErrorDetailSample struct {
+	Message        string         `json:"message"`
+	FirstAppFrame  string         `json:"first_app_frame,omitempty"`
+	StackTrace     string         `json:"stack_trace,omitempty"`
+	Context        map[string]any `json:"context,omitempty"`
+	Properties     map[string]any `json:"properties,omitempty"`
+}
+
 type PerfResponse struct {
 	Endpoints []PerfEndpoint `json:"endpoints"`
 }
@@ -471,6 +499,97 @@ func (h *Handler) handleErrors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ---------------------------------------------------------------------------
+// GetErrorDetail
+// ---------------------------------------------------------------------------
+
+// GetErrorDetail returns the full investigation payload for a single error
+// fingerprint. It combines rollup summary data, the most recent sample raw
+// event, and the hourly occurrence timeline.
+func (h *Handler) GetErrorDetail(ctx context.Context, fingerprint string) (*ErrorDetailResponse, error) {
+	if fingerprint == "" {
+		return nil, invalidQueryf("fingerprint is required")
+	}
+
+	now := h.now().UTC()
+	since := now.Add(-7 * 24 * time.Hour)
+
+	// 1. Hourly metrics for this fingerprint — gives us name, timeline, and
+	//    aggregated summary (first/last seen, total occurrences).
+	hourlies, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
+		Kind:        beacondb.KindError,
+		PeriodKind:  beacondb.PeriodHour,
+		Fingerprint: fingerprint,
+		Since:       since,
+		Until:       now.Add(time.Hour),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list error hourlies: %w", err)
+	}
+	if len(hourlies) == 0 {
+		return nil, fmt.Errorf("fingerprint %s: %w", fingerprint, beacondb.ErrNotFound)
+	}
+
+	// Aggregate summary from hourlies.
+	name := hourlies[0].Name
+	first := hourlies[0].PeriodStart
+	last := hourlies[0].PeriodStart
+	var total int64
+	timeline := make([]MetricPoint, 0, len(hourlies))
+	for _, m := range hourlies {
+		if m.PeriodStart.Before(first) {
+			first = m.PeriodStart
+		}
+		if m.PeriodStart.After(last) {
+			last = m.PeriodStart
+		}
+		total += m.Count
+		timeline = append(timeline, MetricPoint{
+			PeriodStart: m.PeriodStart.UTC().Format(time.RFC3339),
+			Count:       m.Count,
+		})
+	}
+
+	resp := &ErrorDetailResponse{
+		Fingerprint:       fingerprint,
+		Name:              name,
+		FirstSeen:         first.UTC().Format(time.RFC3339),
+		LastSeen:          last.UTC().Format(time.RFC3339),
+		Occurrences:       total,
+		HourlyOccurrences: timeline,
+	}
+
+	// 2. Most recent sample event (may be pruned).
+	//    Bound to last 24h to avoid loading thousands of rows for noisy
+	//    fingerprints. If nothing in 24h, the sample is effectively pruned.
+	//    ListEvents returns ASC order; take the last element.
+	events, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:        beacondb.KindError,
+		Fingerprint: fingerprint,
+		Since:       now.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list error events: %w", err)
+	}
+	if len(events) > 0 {
+		ev := events[len(events)-1] // most recent (ASC order)
+
+		msg, _ := ev.Properties["message"].(string)
+		frame, _ := ev.Properties["first_app_frame"].(string)
+		trace, _ := ev.Properties["stack_trace"].(string)
+
+		resp.SampleEvent = &ErrorDetailSample{
+			Message:       msg,
+			FirstAppFrame: frame,
+			StackTrace:    trace,
+			Context:       ev.Context,
+			Properties:    ev.Properties,
+		}
+	}
+
+	return resp, nil
 }
 
 // ---------------------------------------------------------------------------
