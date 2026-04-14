@@ -2,7 +2,12 @@
 <h1>{{.Name}}</h1>
 <p class="subtitle">Endpoint performance detail</p>
 {{if .Chart}}
+<h3 class="chart-title">P95 Latency</h3>
 <div class="chart-container">{{.Chart}}</div>
+{{end}}
+{{if .VolumeChart}}
+<h3 class="chart-title">Request Volume</h3>
+<div class="chart-container">{{.VolumeChart}}</div>
 {{end}}
 <div class="detail-stats">
   {{if .Stats}}

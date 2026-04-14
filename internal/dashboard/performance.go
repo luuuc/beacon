@@ -7,6 +7,8 @@ import (
 
 	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/reads"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 type perfCardData struct {
@@ -25,6 +27,7 @@ func (d *Dashboard) handlePerformance(w http.ResponseWriter, r *http.Request) {
 		d.log.Error("performance query", "err", err)
 	}
 
+	p := message.NewPrinter(language.English)
 	var cards []perfCardData
 	if resp != nil {
 		for _, ep := range resp.Endpoints {
@@ -36,7 +39,7 @@ func (d *Dashboard) handlePerformance(w http.ResponseWriter, r *http.Request) {
 				BaselineP95: fmt.Sprintf("%.0fms", ep.BaselineP95),
 				Drift:       drift,
 				DriftClass:  cls,
-				Volume:      "",
+				Volume:      p.Sprintf("%d", ep.RequestCount),
 			})
 		}
 	}
@@ -67,16 +70,19 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Build chart from P95 values.
-	var points []ChartPoint
+	// Build charts from P95 values and hourly counts.
+	var latencyPoints, volumePoints []ChartPoint
 	var p95Values []float64
+	var totalRequests int64
 	for _, pt := range resp.Data {
 		val := 0.0
 		if pt.P95 != nil {
 			val = *pt.P95
 		}
-		points = append(points, ChartPoint{Label: pt.PeriodStart, Value: val})
+		latencyPoints = append(latencyPoints, ChartPoint{Label: pt.PeriodStart, Value: val})
+		volumePoints = append(volumePoints, ChartPoint{Label: pt.PeriodStart, Value: float64(pt.Count)})
 		p95Values = append(p95Values, val)
+		totalRequests += pt.Count
 	}
 
 	var baseline *float64
@@ -85,16 +91,22 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 		baseline = &resp.Baseline.HourlyCountMean
 	}
 
-	chart := ChartSVG(ChartOptions{
+	latencyChart := ChartSVG(ChartOptions{
 		Width: 800, Height: 250,
-		Series:   points,
+		Series:   latencyPoints,
 		Baseline: baseline,
 	})
+	volumeChart := ChartSVG(ChartOptions{
+		Width: 800, Height: 200,
+		Series: volumePoints,
+	})
 
+	p := message.NewPrinter(language.English)
 	var stats []stat
 	if len(p95Values) > 0 {
 		stats = append(stats, stat{"Current P95", fmt.Sprintf("%.0fms", mean(p95Values))})
 	}
+	stats = append(stats, stat{"Requests (7d)", p.Sprintf("%d", totalRequests)})
 	if resp.Baseline != nil {
 		stats = append(stats, stat{"Baseline mean (hourly)", fmt.Sprintf("%.1f", resp.Baseline.HourlyCountMean)})
 		stats = append(stats, stat{"Baseline stddev", fmt.Sprintf("%.1f", resp.Baseline.HourlyCountStd)})
@@ -103,11 +115,12 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 	stats = append(stats, stat{"Period", resp.PeriodKind})
 
 	d.render(w, r, "endpoint_detail.html", "", pageData(map[string]any{
-		"ActiveNav": "performance",
-		"Title":     name,
-		"Name":      name,
-		"Chart":     chart,
-		"Stats":     stats,
+		"ActiveNav":   "performance",
+		"Title":       name,
+		"Name":        name,
+		"Chart":       latencyChart,
+		"VolumeChart": volumeChart,
+		"Stats":       stats,
 	}))
 }
 

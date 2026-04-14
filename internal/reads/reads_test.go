@@ -345,6 +345,12 @@ func TestPerfEndpoints_driftOrdering(t *testing.T) {
 	if resp.Endpoints[0].DriftSigmas < 5 {
 		t.Errorf("drift = %v, expected large positive", resp.Endpoints[0].DriftSigmas)
 	}
+	// /slowed: 24 hours seeded from currentStart (truncated to 12:00), but
+	// currentCutoff is fixedNow - 24h = 12:30, so the first hour (12:00)
+	// falls in baseline. 23 current-window hours × 10 = 230.
+	if resp.Endpoints[0].RequestCount != 230 {
+		t.Errorf("request_count = %d, want 230", resp.Endpoints[0].RequestCount)
+	}
 }
 
 func TestPerfEndpoints_driftFilter(t *testing.T) {

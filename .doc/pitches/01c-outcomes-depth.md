@@ -3,7 +3,7 @@
 *Prove the most differentiated pillar works end-to-end. Follow-up to pitch 00 (outcome tracking via `Beacon.track`, cards 1-3), pitch 00d (outcomes dashboard pages, cards 5-6), and the AI workflow loop described in `definition/08-ai-workflow.md`.*
 
 **Appetite:** small batch (~3-5 days)
-**Status:** Shipped — pending PR
+**Status:** Shipped
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/00-bootstrap.md` (cards 1-3: outcome events, `beacon.metric` + `beacon.outcome_check` + `beacon.compare` MCP tools), `pitches/00d-dashboard.md` (cards 5-6: outcomes pillar page + detail), `pitches/00b-ruby-client-hardening.md` (Rails Railtie auto-fires `deploy.shipped` on boot)
 **Related:** `definition/01-purpose.md` ("Did the feature work?" — the first of Beacon's three questions), `definition/08-ai-workflow.md` (the three-phase before/during/after loop — outcome check is the "after" payoff), `definition/03-data-model.md` (outcome events, deploy baselines), `decisions/0002-maket-first-integration.md` (Maket as proof point)

@@ -320,6 +320,13 @@ h1 {
 
 /* Detail pages */
 
+.chart-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .chart-container {
   margin-bottom: 2rem;
 
