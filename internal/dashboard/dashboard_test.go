@@ -266,6 +266,12 @@ func TestPerformancePage(t *testing.T) {
 	if !strings.Contains(body, "GET /dashboard") {
 		t.Error("missing endpoint card")
 	}
+	// seedTestData seeds 48 hours from -48h. fixedNow is 12:00 (on the hour),
+	// so cutoff is exactly -24h; hours 24-47 fall in the current window.
+	// 24 × 50 = 1,200 requests.
+	if !strings.Contains(body, "1,200 req") {
+		t.Error("missing volume on performance card")
+	}
 }
 
 func TestPerformanceDetailPage(t *testing.T) {

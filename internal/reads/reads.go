@@ -175,6 +175,7 @@ type PerfEndpoint struct {
 	BaselineP95    float64 `json:"baseline_p95"`
 	BaselineStddev float64 `json:"baseline_stddev"`
 	DriftSigmas    float64 `json:"drift_sigmas"`
+	RequestCount   int64   `json:"request_count"`
 }
 
 type DeployBaselineResponse struct {
@@ -631,6 +632,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 
 	type nameAcc struct {
 		current, baseline []float64
+		currentCount      int64
 	}
 	byName := map[string]*nameAcc{}
 	for _, m := range allRows {
@@ -646,6 +648,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 			a.baseline = append(a.baseline, *m.P95)
 		} else {
 			a.current = append(a.current, *m.P95)
+			a.currentCount += m.Count
 		}
 	}
 
@@ -669,6 +672,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 			BaselineP95:    roundTo(bMean, 2),
 			BaselineStddev: roundTo(bStddev, 2),
 			DriftSigmas:    roundTo(drift, 2),
+			RequestCount:   a.currentCount,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
