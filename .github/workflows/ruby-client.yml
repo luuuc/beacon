@@ -59,15 +59,6 @@ jobs:
         with:
           ruby-version: "3.4"
 
-      - name: Verify version.rb matches tag
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          FILE_VERSION=$(ruby -e "require_relative 'lib/beacon/version'; puts Beacon::VERSION")
-          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
-            echo "::error::version.rb ($FILE_VERSION) doesn't match tag ($TAG_VERSION)"
-            exit 1
-          fi
-
       - name: Resolve version from tag
         id: version
         run: echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"

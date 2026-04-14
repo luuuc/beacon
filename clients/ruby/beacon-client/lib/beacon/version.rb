@@ -1,3 +1,3 @@
 module Beacon
-  VERSION = "0.6.0"
+  VERSION = ENV.fetch("BEACON_VERSION", "0.0.0-dev")
 end
