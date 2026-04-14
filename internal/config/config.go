@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path" // path (not path/filepath) — URL paths use forward slashes
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +20,12 @@ type Config struct {
 	Baseline  BaselineConfig  `yaml:"baseline"`
 	Ingest    IngestConfig    `yaml:"ingest"`
 	Ambient   AmbientConfig   `yaml:"ambient"`
+	Filter    FilterConfig    `yaml:"filter"`
+}
+
+type FilterConfig struct {
+	ExcludePaths []string `yaml:"exclude_paths"`
+	Defaults     *bool    `yaml:"defaults"` // nil = use defaults; false = disable built-in patterns
 }
 
 type AmbientConfig struct {
@@ -197,6 +205,16 @@ func applyEnv(cfg *Config) error {
 		}
 		cfg.Ingest.IdempMaxEntries = n
 	}
+	if v := os.Getenv("BEACON_FILTER_EXCLUDE_PATHS"); v != "" {
+		cfg.Filter.ExcludePaths = strings.Split(v, ",")
+	}
+	if v := os.Getenv("BEACON_FILTER_DEFAULTS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("BEACON_FILTER_DEFAULTS: %w", err)
+		}
+		cfg.Filter.Defaults = &b
+	}
 	return nil
 }
 
@@ -273,6 +291,12 @@ func mergeNonZero(dst, src *Config) {
 	if src.Ambient.Anomaly.MinVolume != 0 {
 		dst.Ambient.Anomaly.MinVolume = src.Ambient.Anomaly.MinVolume
 	}
+	if len(src.Filter.ExcludePaths) > 0 {
+		dst.Filter.ExcludePaths = src.Filter.ExcludePaths
+	}
+	if src.Filter.Defaults != nil {
+		dst.Filter.Defaults = src.Filter.Defaults
+	}
 }
 
 // IsLoopbackBind reports whether the bind address is restricted to loopback.
@@ -314,6 +338,11 @@ func (c *Config) Validate() error {
 	// guard here: profiling endpoints take arbitrary durations and are a
 	// natural DoS vector. Refuse the combination at boot instead of
 	// papering over it with a middleware check.
+	for _, pat := range c.Filter.ExcludePaths {
+		if _, err := path.Match(pat, "/"); err != nil {
+			return fmt.Errorf("filter.exclude_paths: invalid glob pattern %q: %w", pat, err)
+		}
+	}
 	if c.Server.PprofEnabled && !c.IsLoopbackBind() {
 		return fmt.Errorf(
 			"refusing to enable pprof on non-loopback bind %q: "+
@@ -341,4 +370,71 @@ func ParseBeaconDuration(s string) (time.Duration, error) {
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(s)
+}
+
+// defaultExcludePaths is the built-in set of scanner/bot path patterns that
+// Beacon drops at ingest. These cover WordPress vulnerability probes, PHP
+// scanners, and CGI-bin enumeration — traffic that pollutes metrics on any
+// internet-facing app. User-configured filter.exclude_paths extends this
+// list; filter.defaults: false disables it.
+var defaultExcludePaths = []string{
+	"*.php",
+	"/wp-*",
+	"/cgi-bin*",
+	"/xmlrpc*",
+}
+
+// DefaultExcludePaths returns a copy of the built-in scanner path patterns.
+func DefaultExcludePaths() []string {
+	out := make([]string, len(defaultExcludePaths))
+	copy(out, defaultExcludePaths)
+	return out
+}
+
+// PathFilter checks whether a request path should be excluded from ingest.
+type PathFilter struct {
+	patterns []string
+}
+
+// NewPathFilter builds a filter from the config. When cfg.Defaults is nil or
+// true, built-in scanner patterns are included. User patterns are always added.
+func NewPathFilter(cfg FilterConfig) *PathFilter {
+	var patterns []string
+	if cfg.Defaults == nil || *cfg.Defaults {
+		patterns = append(patterns, defaultExcludePaths...)
+	}
+	patterns = append(patterns, cfg.ExcludePaths...)
+	return &PathFilter{patterns: patterns}
+}
+
+// Patterns returns the active exclusion patterns (for startup logging).
+func (f *PathFilter) Patterns() []string {
+	return f.patterns
+}
+
+// ShouldExclude reports whether the given path matches any exclusion pattern.
+// p should be the URL path portion (e.g. "/items/123"), not the full event
+// name (e.g. "GET /items/123") — the caller must strip the HTTP method.
+//
+// It uses Go's path.Match semantics: * matches any non-separator sequence,
+// ? matches a single non-separator character.
+//
+// Patterns starting with "/" are matched against the full path. Patterns
+// without a leading "/" (e.g. "*.php") are matched against the last path
+// segment (basename), so "*.php" catches "/wp-content/foo.php" as well as
+// "/foo.php".
+func (f *PathFilter) ShouldExclude(p string) bool {
+	base := path.Base(p)
+	for _, pat := range f.patterns {
+		if pat != "" && pat[0] == '/' {
+			if matched, _ := path.Match(pat, p); matched {
+				return true
+			}
+		} else {
+			if matched, _ := path.Match(pat, base); matched {
+				return true
+			}
+		}
+	}
+	return false
 }

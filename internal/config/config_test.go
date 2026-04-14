@@ -230,8 +230,135 @@ func clearEnv(t *testing.T) {
 		"BEACON_DATABASE_PATH", "BEACON_DATABASE_SCHEMA",
 		"BEACON_DATABASE_MAX_CONNS",
 		"BEACON_INGEST_TRUST_XFF", "BEACON_INGEST_IDEMP_MAX_ENTRIES",
+		"BEACON_FILTER_EXCLUDE_PATHS", "BEACON_FILTER_DEFAULTS",
 	} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
+	}
+}
+
+func TestFilterConfigFromYAML(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "beacon.yml")
+	if err := os.WriteFile(path, []byte(`
+filter:
+  exclude_paths:
+    - "*.php"
+    - "/custom/*"
+  defaults: false
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Filter.ExcludePaths) != 2 {
+		t.Fatalf("exclude_paths = %v, want 2 entries", cfg.Filter.ExcludePaths)
+	}
+	if cfg.Filter.Defaults == nil || *cfg.Filter.Defaults != false {
+		t.Errorf("defaults = %v, want false", cfg.Filter.Defaults)
+	}
+}
+
+func TestFilterConfigEnvOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_FILTER_EXCLUDE_PATHS", "/probe/*,*.aspx")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Filter.ExcludePaths) != 2 {
+		t.Fatalf("exclude_paths = %v, want 2", cfg.Filter.ExcludePaths)
+	}
+	if cfg.Filter.ExcludePaths[0] != "/probe/*" {
+		t.Errorf("exclude_paths[0] = %q, want /probe/*", cfg.Filter.ExcludePaths[0])
+	}
+}
+
+func TestFilterConfigEnvDefaultsFalse(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_FILTER_DEFAULTS", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Filter.Defaults == nil || *cfg.Filter.Defaults != false {
+		t.Errorf("defaults = %v, want false", cfg.Filter.Defaults)
+	}
+	f := NewPathFilter(cfg.Filter)
+	if f.ShouldExclude("/foo.php") {
+		t.Error("expected *.php to NOT be excluded when defaults disabled via env")
+	}
+}
+
+func TestValidateRejectsBadGlobPattern(t *testing.T) {
+	cfg := Defaults()
+	cfg.Filter.ExcludePaths = []string{"[invalid"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for bad glob pattern")
+	}
+	if !strings.Contains(err.Error(), "invalid glob pattern") {
+		t.Errorf("error = %v, want 'invalid glob pattern' hint", err)
+	}
+}
+
+func TestPathFilterDefaultPatterns(t *testing.T) {
+	f := NewPathFilter(FilterConfig{})
+	cases := []struct {
+		path    string
+		exclude bool
+	}{
+		{"/wp-class.php", true},
+		{"/sadcut1.php", true},
+		{"/wp-admin", true},
+		{"/wp-content", true},
+		{"/cgi-bin", true},
+		{"/xmlrpc", true},
+		{"/items/123", false},
+		{"/search", false},
+		{"/up", false},
+		{"/api/events", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			got := f.ShouldExclude(tc.path)
+			if got != tc.exclude {
+				t.Errorf("ShouldExclude(%q) = %v, want %v", tc.path, got, tc.exclude)
+			}
+		})
+	}
+}
+
+func TestPathFilterUserPatternsExtendDefaults(t *testing.T) {
+	f := NewPathFilter(FilterConfig{
+		ExcludePaths: []string{"/up", "/health"},
+	})
+	// User patterns
+	if !f.ShouldExclude("/up") {
+		t.Error("expected /up to be excluded (user pattern)")
+	}
+	if !f.ShouldExclude("/health") {
+		t.Error("expected /health to be excluded (user pattern)")
+	}
+	// Defaults still active
+	if !f.ShouldExclude("/lock360.php") {
+		t.Error("expected *.php default to still be active")
+	}
+}
+
+func TestPathFilterDefaultsDisabled(t *testing.T) {
+	no := false
+	f := NewPathFilter(FilterConfig{
+		ExcludePaths: []string{"/up"},
+		Defaults:     &no,
+	})
+	if !f.ShouldExclude("/up") {
+		t.Error("expected /up to be excluded")
+	}
+	if f.ShouldExclude("/lock360.php") {
+		t.Error("expected *.php to NOT be excluded when defaults disabled")
 	}
 }
