@@ -3,7 +3,7 @@
 *Make Beacon's data trustworthy by killing noise at the source and making anomalies actionable. Follow-up to pitch 01, cards 3 (anomaly detector), 4 (anomaly read endpoint + MCP tool), and 7 (anomaly dashboard page).*
 
 **Appetite:** small batch (~3 days)
-**Status:** Shipped — pending PR
+**Status:** Shipped
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/01-ambient-anomalies.md` (shipped the anomaly detector, `beacon.anomalies` MCP tool, and `/anomalies` dashboard page)
 **Related:** `definition/06-http-api.md` (MCP server contract, `/api/anomalies` endpoint), `definition/03-data-model.md` (anomaly records in `beacon_metrics`), `decisions/0002-maket-first-integration.md` (Maket as proof point)
