@@ -13,10 +13,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 )
+
+// ErrNotFound is returned when a requested row does not exist.
+var ErrNotFound = errors.New("not found")
 
 // Kind is the pillar an event or metric belongs to.
 //
@@ -100,6 +104,7 @@ type Metric struct {
 	DimensionHash string         // SHA256 hex of canonical JSON; "" for empty
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	DismissedAt   *time.Time // non-nil means dismissed (anomaly records only)
 }
 
 // EventFilter narrows ListEvents. Zero-value fields are unbounded, including
@@ -116,14 +121,15 @@ type EventFilter struct {
 
 // MetricFilter narrows ListMetrics. Zero-value fields are unbounded.
 type MetricFilter struct {
-	Kind         Kind
-	Name         string
-	PeriodKind   PeriodKind // "" = any
-	PeriodWindow string     // "" = any
-	Fingerprint  string     // "" = any
-	Since        time.Time
-	Until        time.Time
-	Limit        int
+	Kind             Kind
+	Name             string
+	PeriodKind       PeriodKind // "" = any
+	PeriodWindow     string     // "" = any
+	Fingerprint      string     // "" = any
+	Since            time.Time
+	Until            time.Time
+	Limit            int
+	ExcludeDismissed bool // when true, exclude rows where dismissed_at IS NOT NULL
 }
 
 // Adapter is the full contract every backend implements. Implementations
@@ -165,6 +171,10 @@ type Adapter interface {
 
 	// ListMetrics returns metric rows matching the filter ordered by period_start ASC.
 	ListMetrics(ctx context.Context, filter MetricFilter) ([]Metric, error)
+
+	// DismissAnomaly sets dismissed_at on an anomaly metric row.
+	// Returns an error wrapping ErrNotFound if the row does not exist.
+	DismissAnomaly(ctx context.Context, id int64) error
 
 	// DeleteEventsOlderThan removes raw events with created_at < cutoff.
 	// Returns the number of rows deleted.

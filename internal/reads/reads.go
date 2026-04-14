@@ -32,6 +32,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,7 @@ func (h *Handler) Mount(mux interface {
 	mux.Handle("GET /api/errors", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleErrors)))
 	mux.Handle("GET /api/perf/endpoints", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handlePerfEndpoints)))
 	mux.Handle("GET /api/anomalies", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleAnomalies)))
+	mux.Handle("DELETE /api/anomalies/{id}", httputil.BearerMiddleware(h.cfg.AuthToken, http.HandlerFunc(h.handleDismissAnomaly)))
 }
 
 // ---------------------------------------------------------------------------
@@ -713,6 +715,7 @@ type AnomaliesResponse struct {
 
 // AnomalyEntry is one anomaly in the response.
 type AnomalyEntry struct {
+	ID             int64          `json:"id"`
 	AnomalyKind    string         `json:"anomaly_kind"`
 	MetricKind     string         `json:"metric_kind"`
 	Name           string         `json:"name"`
@@ -740,9 +743,10 @@ func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*A
 	cutoff := now.Add(-req.Since)
 
 	rows, err := h.adapter.ListMetrics(ctx, beacondb.MetricFilter{
-		PeriodKind: beacondb.PeriodAnomaly,
-		Since:      cutoff,
-		Until:      now,
+		PeriodKind:       beacondb.PeriodAnomaly,
+		Since:            cutoff,
+		Until:            now,
+		ExcludeDismissed: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list anomalies: %w", err)
@@ -765,6 +769,7 @@ func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*A
 			m.Name, m.Fingerprint, m.Count, mean)
 
 		entries = append(entries, AnomalyEntry{
+			ID:             m.ID,
 			AnomalyKind:    m.Fingerprint,
 			MetricKind:     string(m.Kind),
 			Name:           m.Name,
@@ -798,6 +803,30 @@ func (h *Handler) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// DismissAnomaly marks an anomaly as dismissed. Used by both the HTTP API
+// and the dashboard.
+func (h *Handler) DismissAnomaly(ctx context.Context, id int64) error {
+	return h.adapter.DismissAnomaly(ctx, id)
+}
+
+func (h *Handler) handleDismissAnomaly(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid anomaly id")
+		return
+	}
+	if err := h.DismissAnomaly(r.Context(), id); err != nil {
+		if errors.Is(err, beacondb.ErrNotFound) {
+			httputil.WriteJSONError(w, http.StatusNotFound, "anomaly not found or already dismissed")
+			return
+		}
+		h.log.Error("dismiss anomaly", "err", err, "id", id)
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "dismiss failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------

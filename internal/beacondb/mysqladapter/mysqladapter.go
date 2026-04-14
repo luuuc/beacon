@@ -214,6 +214,21 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 	return out, rows.Err()
 }
 
+func (a *Adapter) DismissAnomaly(ctx context.Context, id int64) error {
+	now := time.Now().UnixNano()
+	res, err := a.db.ExecContext(ctx,
+		`UPDATE beacon_metrics SET dismissed_at = ?, updated_at = ?
+		  WHERE id = ? AND period_kind = 'anomaly' AND dismissed_at IS NULL`, now, now, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("anomaly %d: %w", id, beacondb.ErrNotFound)
+	}
+	return nil
+}
+
 func (a *Adapter) DeleteEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := a.db.ExecContext(ctx, `DELETE FROM beacon_events WHERE created_at < ?`, cutoff.UnixNano())
 	if err != nil {
@@ -314,6 +329,9 @@ func (a *Adapter) ListMetrics(ctx context.Context, filter beacondb.MetricFilter)
 	if !filter.Until.IsZero() {
 		where = append(where, "period_start < ?")
 		args = append(args, filter.Until.UnixNano())
+	}
+	if filter.ExcludeDismissed {
+		where = append(where, "dismissed_at IS NULL")
 	}
 
 	sqlStr := `

@@ -113,6 +113,7 @@ func (d *Dashboard) Mount(mux interface {
 	mux.Handle("GET /errors", auth(http.HandlerFunc(d.handleErrors)))
 	mux.Handle("GET /errors/{fingerprint}", auth(http.HandlerFunc(d.handleErrorDetail)))
 	mux.Handle("GET /anomalies", auth(http.HandlerFunc(d.handleAnomalies)))
+	mux.Handle("DELETE /anomalies/{id}/dismiss", auth(http.HandlerFunc(d.handleDismissAnomaly)))
 }
 
 // pageData adds shared template fields (Version) to m and returns it.

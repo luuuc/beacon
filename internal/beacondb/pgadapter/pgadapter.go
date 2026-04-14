@@ -330,6 +330,9 @@ func (a *Adapter) ListMetrics(ctx context.Context, filter beacondb.MetricFilter)
 	if !filter.Until.IsZero() {
 		add("period_start < $%d", filter.Until)
 	}
+	if filter.ExcludeDismissed {
+		where = append(where, "dismissed_at IS NULL")
+	}
 
 	sql := `
 SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50, p95, p99,
@@ -369,6 +372,19 @@ SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (a *Adapter) DismissAnomaly(ctx context.Context, id int64) error {
+	tag, err := a.pool.Exec(ctx,
+		`UPDATE beacon_metrics SET dismissed_at = NOW(), updated_at = NOW()
+		  WHERE id = $1 AND period_kind = 'anomaly' AND dismissed_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("anomaly %d: %w", id, beacondb.ErrNotFound)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

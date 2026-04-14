@@ -14,6 +14,7 @@ package memfake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -206,6 +207,9 @@ func (f *Fake) ListMetrics(_ context.Context, filter beacondb.MetricFilter) ([]b
 		if !filter.Until.IsZero() && !m.PeriodStart.Before(filter.Until) {
 			continue
 		}
+		if filter.ExcludeDismissed && m.DismissedAt != nil {
+			continue
+		}
 		out = append(out, m)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -218,6 +222,23 @@ func (f *Fake) ListMetrics(_ context.Context, filter beacondb.MetricFilter) ([]b
 		out = out[:filter.Limit]
 	}
 	return out, nil
+}
+
+func (f *Fake) DismissAnomaly(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.requireMigrated(); err != nil {
+		return err
+	}
+	for i := range f.metrics {
+		if f.metrics[i].ID == id && f.metrics[i].PeriodKind == beacondb.PeriodAnomaly && f.metrics[i].DismissedAt == nil {
+			now := time.Now()
+			f.metrics[i].DismissedAt = &now
+			f.metrics[i].UpdatedAt = now
+			return nil
+		}
+	}
+	return fmt.Errorf("anomaly %d: %w", id, beacondb.ErrNotFound)
 }
 
 func (f *Fake) DeleteEventsOlderThan(_ context.Context, cutoff time.Time) (int64, error) {

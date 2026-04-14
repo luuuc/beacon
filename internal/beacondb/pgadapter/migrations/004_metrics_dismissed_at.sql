@@ -1,0 +1,2 @@
+ALTER TABLE beacon_metrics
+  ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ;

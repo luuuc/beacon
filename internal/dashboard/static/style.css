@@ -192,6 +192,20 @@ h1 {
   margin-bottom: 0.5rem;
 }
 
+.btn-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  padding: 0 0.25rem;
+
+  &:hover { opacity: 1; }
+}
+
 .card-sparkline {
   margin-bottom: 0.5rem;
   color: var(--sparkline);

@@ -3,6 +3,8 @@ package reads
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -573,6 +575,133 @@ func TestHandleAnomalies_HTTP(t *testing.T) {
 	}
 	if resp.Anomalies[0].Current != 200 {
 		t.Errorf("current = %d, want 200", resp.Anomalies[0].Current)
+	}
+}
+
+func TestDismissAnomaly_excludesFromGetAnomalies(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindAmbient, Name: "http_request",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 100, Sum: fp(12.4), P50: fp(10), P95: fp(0.5),
+		Fingerprint: "volume_shift",
+	})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /search",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-2 * time.Hour),
+		Count: 50, Sum: fp(5.0), P50: fp(10), P95: fp(2),
+		Fingerprint: "volume_shift",
+	})
+
+	// Both should appear initially.
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Anomalies) != 2 {
+		t.Fatalf("before dismiss: anomalies = %d, want 2", len(resp.Anomalies))
+	}
+
+	// Dismiss the first one by ID.
+	dismissID := resp.Anomalies[0].ID
+	if err := h.DismissAnomaly(context.Background(), dismissID); err != nil {
+		t.Fatalf("DismissAnomaly: %v", err)
+	}
+
+	// Only one should remain.
+	resp, err = h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Anomalies) != 1 {
+		t.Fatalf("after dismiss: anomalies = %d, want 1", len(resp.Anomalies))
+	}
+	if resp.Anomalies[0].ID == dismissID {
+		t.Error("dismissed anomaly should not appear in GetAnomalies")
+	}
+}
+
+func TestDismissAnomaly_notFoundReturnsError(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+
+	err := h.DismissAnomaly(context.Background(), 99999)
+	if err == nil {
+		t.Fatal("expected error for non-existent ID")
+	}
+	if !errors.Is(err, beacondb.ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDismissAnomaly_alreadyDismissedReturnsError(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindAmbient, Name: "spike",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 100, Sum: fp(5.0), P50: fp(10), P95: fp(1),
+		Fingerprint: "volume_shift",
+	})
+
+	resp, _ := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	id := resp.Anomalies[0].ID
+
+	// First dismiss succeeds.
+	if err := h.DismissAnomaly(context.Background(), id); err != nil {
+		t.Fatalf("first dismiss: %v", err)
+	}
+	// Second dismiss returns ErrNotFound (already dismissed).
+	err := h.DismissAnomaly(context.Background(), id)
+	if !errors.Is(err, beacondb.ErrNotFound) {
+		t.Errorf("second dismiss = %v, want ErrNotFound", err)
+	}
+}
+
+func TestHandleDismissAnomaly_HTTP(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /items",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 200, Sum: fp(5.0), P50: fp(20), P95: fp(2),
+		Fingerprint: "volume_shift",
+	})
+
+	// Get the ID via the API.
+	resp, _ := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	id := resp.Anomalies[0].ID
+
+	m := mux(h)
+
+	// DELETE /api/anomalies/:id returns 204.
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/anomalies/%d", id), nil)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("dismiss status = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+
+	// GET /api/anomalies no longer returns it.
+	req = httptest.NewRequest(http.MethodGet, "/api/anomalies?since=24h", nil)
+	rec = httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	var anomResp AnomaliesResponse
+	mustJSON(t, rec.Body.Bytes(), &anomResp)
+	if len(anomResp.Anomalies) != 0 {
+		t.Errorf("anomalies after dismiss = %d, want 0", len(anomResp.Anomalies))
+	}
+
+	// DELETE again returns 404 (already dismissed).
+	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/anomalies/%d", id), nil)
+	rec = httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("re-dismiss status = %d, want 404", rec.Code)
 	}
 }
 

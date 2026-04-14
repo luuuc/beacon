@@ -1,8 +1,13 @@
 {{define "anomaly_card.html"}}
-<div class="card anomaly-card">
+<div class="card anomaly-card" id="anomaly-{{.ID}}">
   <div class="card-header">
     <span class="card-name">{{.Name}}</span>
     <span class="badge badge-{{.BadgeClass}}">{{.AnomalyKind}}</span>
+    <button class="btn-dismiss"
+            hx-delete="/anomalies/{{.ID}}/dismiss"
+            hx-target="#anomaly-{{.ID}}"
+            hx-swap="outerHTML swap:0.3s"
+            title="Dismiss">&times;</button>
   </div>
   {{if .Dimension}}
   <div class="card-dimension">{{.Dimension}}</div>

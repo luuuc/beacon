@@ -1,17 +1,21 @@
 package dashboard
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/reads"
 )
 
 type anomalyCardData struct {
+	ID           int64
 	AnomalyKind  string
 	BadgeClass   string // CSS class: "shift" or "spike"
 	Name         string
@@ -68,6 +72,7 @@ func toAnomalyCard(a reads.AnomalyEntry) anomalyCardData {
 	link := linkForAnomaly(a)
 
 	return anomalyCardData{
+		ID:           a.ID,
 		AnomalyKind:  a.AnomalyKind,
 		BadgeClass:   badge,
 		Name:         a.Name,
@@ -79,6 +84,24 @@ func toAnomalyCard(a reads.AnomalyEntry) anomalyCardData {
 		Link:         link,
 		FirstDetected: a.FirstDetected,
 	}
+}
+
+func (d *Dashboard) handleDismissAnomaly(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := d.reads.DismissAnomaly(r.Context(), id); err != nil {
+		if errors.Is(err, beacondb.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		d.log.Error("dismiss anomaly", "err", err, "id", id)
+		http.Error(w, "dismiss failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // linkForAnomaly returns a link to the relevant pillar detail page.
