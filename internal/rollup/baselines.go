@@ -106,6 +106,11 @@ func (w *Worker) captureDeploymentBaselines(ctx context.Context) error {
 // captureDeploymentBaselineAt snapshots the 24h-before window for every
 // metric active in that window.
 func (w *Worker) captureDeploymentBaselineAt(ctx context.Context, deployTime time.Time) error {
+	// Truncate to second precision so the baseline period_start round-trips
+	// cleanly through RFC3339 formatting in GetDeployBaseline. Without this,
+	// sub-second precision from the deploy event makes it impossible for
+	// CompareDeployBaseline callers to supply a matching timestamp.
+	deployTime = deployTime.Truncate(time.Second)
 	lookbackStart := deployTime.Add(-DeploymentLookback)
 	hourlies, err := w.adapter.ListMetrics(ctx, beacondb.MetricFilter{
 		PeriodKind: beacondb.PeriodHour,

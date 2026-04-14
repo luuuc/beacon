@@ -52,13 +52,13 @@ func CompareCount(current, baseline int64) Verdict {
 // the counts and ratio alongside the verdict so the caller can render a
 // human-readable summary.
 type Comparison struct {
-	Metric       string
-	Fingerprint  string
-	BaselineTime time.Time
-	Baseline     int64
-	Current      int64
-	Ratio        float64
-	Verdict      Verdict
+	Metric       string    `json:"metric"`
+	Fingerprint  string    `json:"fingerprint,omitempty"`
+	BaselineTime time.Time `json:"baseline_time"`
+	Baseline     int64     `json:"baseline"`
+	Current      int64     `json:"current"`
+	Ratio        float64   `json:"ratio"`
+	Verdict      Verdict   `json:"verdict"`
 }
 
 // CompareDeployBaseline reads the deployment baseline captured at deployTime
@@ -72,6 +72,9 @@ type Comparison struct {
 // More sophisticated comparison (per-endpoint p95 drift, etc.) can live in
 // their own helpers without touching this one.
 func (w *Worker) CompareDeployBaseline(ctx context.Context, kind beacondb.Kind, name string, deployTime time.Time) (Comparison, error) {
+	// Truncate to second precision to match the capture side (baselines.go)
+	// and to tolerate pre-fix baselines that may still carry sub-seconds.
+	deployTime = deployTime.Truncate(time.Second)
 	cmp := Comparison{Metric: name, BaselineTime: deployTime}
 
 	baselines, err := w.adapter.ListMetrics(ctx, beacondb.MetricFilter{
@@ -85,7 +88,7 @@ func (w *Worker) CompareDeployBaseline(ctx context.Context, kind beacondb.Kind, 
 	}
 	var baseline *beacondb.Metric
 	for i := range baselines {
-		if baselines[i].PeriodStart.Equal(deployTime) {
+		if baselines[i].PeriodStart.Truncate(time.Second).Equal(deployTime) {
 			baseline = &baselines[i]
 			break
 		}
