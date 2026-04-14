@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -852,5 +853,235 @@ func TestHighlightStackTrace_escapesHTML(t *testing.T) {
 	}
 	if !strings.Contains(result, "&lt;script&gt;") {
 		t.Error("expected escaped HTML entities")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests for outcomes helper functions
+// ---------------------------------------------------------------------------
+
+func TestSparklineDeployIndices(t *testing.T) {
+	base := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	week := 7 * 24 * time.Hour
+
+	tests := []struct {
+		name    string
+		deploys []reads.DeployEvent
+		nPts    int
+		want    []int
+	}{
+		{"empty deploys", nil, 100, nil},
+		{"zero points", []reads.DeployEvent{{CreatedAt: base.Add(time.Hour)}}, 0, nil},
+		{"single point", []reads.DeployEvent{{CreatedAt: base.Add(time.Hour)}}, 1, nil},
+		{
+			"mid window",
+			[]reads.DeployEvent{{CreatedAt: base.Add(week / 2)}},
+			168,
+			[]int{84},
+		},
+		{
+			"start of window",
+			[]reads.DeployEvent{{CreatedAt: base}},
+			168,
+			[]int{0},
+		},
+		{
+			"end of window",
+			[]reads.DeployEvent{{CreatedAt: base.Add(week)}},
+			168,
+			[]int{168 - 1},
+		},
+		{
+			"outside window ignored",
+			[]reads.DeployEvent{{CreatedAt: base.Add(-time.Hour)}},
+			168,
+			nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sparklineDeployIndices(tc.deploys, base, base.Add(week), tc.nPts)
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestChartDeployIndices(t *testing.T) {
+	points := []ChartPoint{
+		{"2026-04-07", 10},
+		{"2026-04-08", 20},
+		{"2026-04-09", 30},
+	}
+
+	tests := []struct {
+		name    string
+		deploys []reads.DeployEvent
+		wantN   int
+		wantIdx int
+		wantLbl string
+	}{
+		{"empty", nil, 0, 0, ""},
+		{
+			"maps to nearest day",
+			[]reads.DeployEvent{{SHA: "abc1234567", CreatedAt: time.Date(2026, 4, 8, 6, 0, 0, 0, time.UTC)}},
+			1, 1, "abc1234",
+		},
+		{
+			"empty SHA becomes dash",
+			[]reads.DeployEvent{{SHA: "", CreatedAt: time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC)}},
+			1, 2, "—",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := chartDeployIndices(tc.deploys, points)
+			if len(got) != tc.wantN {
+				t.Fatalf("got %d results, want %d", len(got), tc.wantN)
+			}
+			if tc.wantN > 0 {
+				if got[0].Index != tc.wantIdx {
+					t.Errorf("index = %d, want %d", got[0].Index, tc.wantIdx)
+				}
+				if got[0].Label != tc.wantLbl {
+					t.Errorf("label = %q, want %q", got[0].Label, tc.wantLbl)
+				}
+			}
+		})
+	}
+}
+
+func TestChartDeployIndices_deduplicates(t *testing.T) {
+	points := []ChartPoint{
+		{"2026-04-07", 10},
+		{"2026-04-08", 20},
+	}
+	deploys := []reads.DeployEvent{
+		{SHA: "aaa1111", CreatedAt: time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)},
+		{SHA: "bbb2222", CreatedAt: time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC)},
+	}
+	got := chartDeployIndices(deploys, points)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 deduplicated entry, got %d", len(got))
+	}
+	if got[0].Label != "bbb2222" {
+		t.Errorf("last SHA should win: got %q, want bbb2222", got[0].Label)
+	}
+}
+
+func TestNearestIndex(t *testing.T) {
+	pts := []time.Time{
+		time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC),
+	}
+	tests := []struct {
+		name string
+		t    time.Time
+		want int
+	}{
+		{"exact match", pts[1], 1},
+		{"between, closer to second", time.Date(2026, 4, 7, 18, 0, 0, 0, time.UTC), 1},
+		{"between, closer to first", time.Date(2026, 4, 7, 6, 0, 0, 0, time.UTC), 0},
+		{"after all", time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC), 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nearestIndex(tc.t, pts)
+			if got != tc.want {
+				t.Errorf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("empty", func(t *testing.T) {
+		if got := nearestIndex(time.Now(), nil); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+}
+
+func TestShortenSHA(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"abc1234567890", "abc1234"},
+		{"short", "short"},
+		{"", "—"},
+		{"  ", "—"},
+		{"abc1234", "abc1234"},
+	}
+	for _, tc := range tests {
+		if got := shortenSHA(tc.in); got != tc.want {
+			t.Errorf("shortenSHA(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestFormatElapsed(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "just now"},
+		{5 * time.Minute, "5m ago"},
+		{90 * time.Minute, "1h ago"},
+		{3 * time.Hour, "3h ago"},
+		{48 * time.Hour, "2d ago"},
+	}
+	for _, tc := range tests {
+		if got := formatElapsed(tc.d); got != tc.want {
+			t.Errorf("formatElapsed(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestSparklineSVG_withDeployMarkers(t *testing.T) {
+	svg := string(SparklineSVG([]float64{1, 2, 3, 4, 5}, 100, 30, 2))
+	if !strings.Contains(svg, "sparkline-deploy") {
+		t.Error("deploy marker not rendered")
+	}
+	if !strings.Contains(svg, "polyline") {
+		t.Error("data line missing")
+	}
+}
+
+func TestChartSVG_baselineBand(t *testing.T) {
+	baseline := 50.0
+	stddev := 10.0
+	svg := string(ChartSVG(ChartOptions{
+		Width: 600, Height: 200,
+		Series: []ChartPoint{
+			{"Apr 1", 40}, {"Apr 2", 60}, {"Apr 3", 55},
+		},
+		Baseline:       &baseline,
+		BaselineStddev: &stddev,
+	}))
+	if !strings.Contains(svg, "chart-band") {
+		t.Error("baseline band not rendered")
+	}
+	if !strings.Contains(svg, "chart-baseline") {
+		t.Error("baseline line not rendered")
+	}
+}
+
+func TestChartSVG_deployLabels(t *testing.T) {
+	svg := string(ChartSVG(ChartOptions{
+		Width: 600, Height: 200,
+		Series: []ChartPoint{
+			{"Apr 1", 40}, {"Apr 2", 60}, {"Apr 3", 55},
+		},
+		DeployIndices: []int{1},
+		DeployLabels:  []string{"abc1234"},
+	}))
+	if !strings.Contains(svg, "chart-deploy-label") {
+		t.Error("deploy label not rendered")
+	}
+	if !strings.Contains(svg, "abc1234") {
+		t.Error("SHA text not in SVG")
 	}
 }

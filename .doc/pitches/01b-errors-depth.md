@@ -3,7 +3,7 @@
 *Make error detail actually help a human or agent investigate. Follow-up to pitch 00 (error fingerprinting, cards 4-6), pitch 00d (error detail dashboard page, card 7), and pitch 01 (anomaly detection revealed the gap during Maket production testing).*
 
 **Appetite:** small batch (~3-5 days)
-**Status:** Shipped — pending PR
+**Status:** Shipped
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/00-bootstrap.md` (cards 4-6: error capture, fingerprinting, `beacon.errors` MCP tool), `pitches/00d-dashboard.md` (card 7: errors pillar page + detail), `pitches/01-ambient-anomalies.md` (Maket production rollout revealed the investigation gap)
 **Related:** `definition/06-http-api.md` (`GET /api/errors` endpoint, fingerprint algorithm, MCP tools), `definition/03-data-model.md` (error events schema, `properties.stack_trace`, `context.deploy_sha`), `definition/08-ai-workflow.md` (agents cross-referencing error fingerprints against diffs — currently blocked by missing MCP tool)

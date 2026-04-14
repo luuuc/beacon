@@ -74,6 +74,10 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 	return &Handler{cfg: cfg, adapter: adapter, log: log, now: now}
 }
 
+// Now returns the handler's clock value. The dashboard uses this so it shares
+// the same injectable clock for testing instead of calling time.Now() directly.
+func (h *Handler) Now() time.Time { return h.now() }
+
 // Mount registers the three HTTP read routes. The MCP server registers its
 // own transport separately and calls the Get* methods below directly.
 func (h *Handler) Mount(mux interface {
@@ -736,6 +740,36 @@ func (h *Handler) GetDeployBaseline(ctx context.Context, kind beacondb.Kind, nam
 }
 
 // ---------------------------------------------------------------------------
+// GetDeployEvents (dashboard)
+// ---------------------------------------------------------------------------
+
+// DeployEvent is a single deploy.shipped occurrence with its SHA (if present).
+type DeployEvent struct {
+	SHA       string    // from event context.deploy_sha; may be ""
+	CreatedAt time.Time
+}
+
+// GetDeployEvents returns deploy.shipped events in [since, until] ordered by
+// time ascending. Used by the dashboard to overlay deploy markers on charts.
+func (h *Handler) GetDeployEvents(ctx context.Context, since, until time.Time) ([]DeployEvent, error) {
+	events, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:  beacondb.KindOutcome,
+		Name:  "deploy.shipped",
+		Since: since,
+		Until: until,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list deploy events: %w", err)
+	}
+	out := make([]DeployEvent, len(events))
+	for i, e := range events {
+		sha, _ := e.Context["deploy_sha"].(string)
+		out[i] = DeployEvent{SHA: sha, CreatedAt: e.CreatedAt}
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
 // GetRecentErrorEvents (dashboard)
 // ---------------------------------------------------------------------------
 
@@ -823,8 +857,13 @@ func (h *Handler) GetOutcomeSummaries(ctx context.Context, window time.Duration)
 			BaselineMean: roundTo(bMean, 2),
 		})
 	}
+	// Sort by absolute drift weighted by volume: a 10% drop on 1000/day
+	// outranks a 50% drop on 2/day. Falls back to percentage when counts
+	// are equal (e.g. both zero).
 	sort.Slice(out, func(i, j int) bool {
-		return math.Abs(out[i].DriftPercent) > math.Abs(out[j].DriftPercent)
+		ai := math.Abs(out[i].DriftPercent) * float64(out[i].DailyCount)
+		aj := math.Abs(out[j].DriftPercent) * float64(out[j].DailyCount)
+		return ai > aj
 	})
 	return out, nil
 }

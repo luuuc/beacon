@@ -348,6 +348,24 @@ h1 {
   opacity: 0.6;
 }
 
+.chart-deploy-label {
+  font-size: 9px;
+  fill: var(--chart-deploy);
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+.chart-band {
+  fill: var(--accent);
+  opacity: 0.1;
+}
+
+.sparkline-deploy {
+  stroke: var(--chart-deploy);
+  stroke-width: 0.75;
+  opacity: 0.5;
+}
+
 .chart-label-x, .chart-label-y {
   font-size: 11px;
   fill: var(--fg-muted);
@@ -405,6 +423,32 @@ h1 {
     word-break: break-all;
   }
 }
+
+/* Deploy context block */
+
+.deploy-context {
+  margin-bottom: 2rem;
+
+  & h2 {
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+  }
+}
+
+.deploy-sha {
+  font-family: var(--font-mono);
+}
+
+.verdict {
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+
+.verdict-pass { color: var(--success); }
+.verdict-drift { color: var(--warning); }
+.verdict-fail { color: var(--danger); }
+.verdict-insufficient { color: var(--fg-muted); }
 
 /* Request context block */
 

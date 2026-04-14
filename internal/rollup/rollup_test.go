@@ -731,3 +731,116 @@ func TestAggregate_introducedDeploySHA_notOverwrittenOnReaggregation(t *testing.
 			metrics[0].IntroducedDeploySHA)
 	}
 }
+
+// TestCompareDeployBaseline_subsecondTruncation verifies that the compare
+// path matches baselines even when the caller's deploy_time was truncated
+// to second precision (e.g. from an RFC3339-formatted captured_at field).
+func TestCompareDeployBaseline_subsecondTruncation(t *testing.T) {
+	// Deploy event has sub-second precision.
+	deployTime := time.Date(2026, 4, 10, 10, 0, 0, 123_456_000, time.UTC)
+	now := deployTime.Add(2 * time.Hour)
+	w, fake := newTestWorker(t, now)
+	ctx := context.Background()
+
+	// Seed hourly metrics in the 24h before the deploy.
+	if err := fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{
+			Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: deployTime.Add(-2 * time.Hour),
+			Count:       50,
+		},
+		{
+			Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: deployTime.Add(-1 * time.Hour),
+			Count:       60,
+		},
+	}); err != nil {
+		t.Fatalf("seed pre-deploy metrics: %v", err)
+	}
+
+	// Insert deploy event and capture baselines.
+	if _, err := fake.InsertEvents(ctx, []beacondb.Event{
+		{Kind: beacondb.KindOutcome, Name: "deploy.shipped", CreatedAt: deployTime},
+	}); err != nil {
+		t.Fatalf("insert deploy event: %v", err)
+	}
+	if err := w.captureDeploymentBaselines(ctx); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+
+	// Seed post-deploy hourly metrics.
+	if err := fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{
+			Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: deployTime.Truncate(time.Hour),
+			Count:       55,
+		},
+	}); err != nil {
+		t.Fatalf("seed post-deploy metrics: %v", err)
+	}
+
+	// Compare using second-precision timestamp (as MCP tools would).
+	truncated := deployTime.Truncate(time.Second)
+	cmp, err := w.CompareDeployBaseline(ctx, beacondb.KindOutcome, "signup.completed", truncated)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if cmp.Verdict == VerdictInsufficient {
+		t.Errorf("verdict = insufficient; baseline should have matched despite sub-second truncation")
+	}
+	if cmp.Baseline == 0 {
+		t.Errorf("baseline = 0, want >0")
+	}
+}
+
+// TestCompareDeployBaseline_prefixSubsecondBaseline verifies that a baseline
+// captured before the truncation fix (with sub-second period_start still in
+// the DB) can still be matched by the comparison path.
+func TestCompareDeployBaseline_prefixSubsecondBaseline(t *testing.T) {
+	deployTime := time.Date(2026, 4, 10, 10, 0, 0, 987_654_000, time.UTC)
+	now := deployTime.Add(2 * time.Hour)
+	w, fake := newTestWorker(t, now)
+	ctx := context.Background()
+
+	// Directly seed a baseline row with sub-second period_start, simulating
+	// a row captured before the truncation fix was deployed.
+	if err := fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{
+			Kind: beacondb.KindOutcome, Name: "order.placed",
+			PeriodKind:  beacondb.PeriodBaseline,
+			PeriodWindow: "deploy",
+			PeriodStart: deployTime, // sub-second precision preserved
+			Count:       200,
+		},
+	}); err != nil {
+		t.Fatalf("seed pre-fix baseline: %v", err)
+	}
+
+	// Seed post-deploy hourly metrics so current window has data.
+	if err := fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{
+			Kind: beacondb.KindOutcome, Name: "order.placed",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: deployTime.Truncate(time.Hour),
+			Count:       180,
+		},
+	}); err != nil {
+		t.Fatalf("seed post-deploy metrics: %v", err)
+	}
+
+	// Compare using second-precision timestamp (as returned by GetDeployBaseline).
+	truncated := deployTime.Truncate(time.Second)
+	cmp, err := w.CompareDeployBaseline(ctx, beacondb.KindOutcome, "order.placed", truncated)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if cmp.Verdict == VerdictInsufficient {
+		t.Errorf("verdict = insufficient; pre-fix baseline with sub-second period_start should still match")
+	}
+	if cmp.Baseline != 200 {
+		t.Errorf("baseline = %d, want 200", cmp.Baseline)
+	}
+}

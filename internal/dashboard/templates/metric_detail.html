@@ -4,6 +4,25 @@
 {{if .Chart}}
 <div class="chart-container">{{.Chart}}</div>
 {{end}}
+{{if .LastDeploy}}
+<div class="deploy-context">
+  <h2>Last deploy</h2>
+  <dl class="context-grid">
+    <div class="context-item">
+      <dt>SHA</dt>
+      <dd class="deploy-sha">{{.LastDeploy.SHA}}</dd>
+    </div>
+    <div class="context-item">
+      <dt>When</dt>
+      <dd>{{.LastDeploy.Elapsed}}</dd>
+    </div>
+    <div class="context-item">
+      <dt>Verdict</dt>
+      <dd class="verdict verdict-{{.LastDeploy.Verdict}}">{{.LastDeploy.Verdict}}</dd>
+    </div>
+  </dl>
+</div>
+{{end}}
 <div class="detail-stats">
   {{if .Stats}}
   <dl class="stats-grid">
