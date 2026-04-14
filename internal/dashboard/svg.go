@@ -8,8 +8,9 @@ import (
 )
 
 // SparklineSVG returns an inline <svg> element with a polyline for the given
-// data series. The result is safe to embed directly in templates.
-func SparklineSVG(series []float64, width, height int) template.HTML {
+// data series and optional deploy marker lines. The result is safe to embed
+// directly in templates.
+func SparklineSVG(series []float64, width, height int, deployIndices ...int) template.HTML {
 	if len(series) == 0 {
 		return template.HTML(fmt.Sprintf(
 			`<svg class="sparkline" width="%d" height="%d" viewBox="0 0 %d %d"></svg>`,
@@ -49,13 +50,29 @@ func SparklineSVG(series []float64, width, height int) template.HTML {
 		points[i] = fmt.Sprintf("%.1f,%.1f", padding+x, padding+y)
 	}
 
-	return template.HTML(fmt.Sprintf(
-		`<svg class="sparkline" width="%d" height="%d" viewBox="0 0 %d %d" preserveAspectRatio="none">`+
-			`<polyline fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="%s"/>`+
-			`</svg>`,
-		width, height, width, height,
-		strings.Join(points, " "),
-	))
+	var b strings.Builder
+	n := len(series)
+	fmt.Fprintf(&b, `<svg class="sparkline" width="%d" height="%d" viewBox="0 0 %d %d" preserveAspectRatio="none">`,
+		width, height, width, height)
+	for _, idx := range deployIndices {
+		if idx >= 0 && idx < n {
+			var dx float64
+			if n == 1 {
+				dx = drawW / 2
+			} else {
+				dx = drawW * float64(idx) / float64(n-1)
+			}
+			fmt.Fprintf(&b,
+				`<line x1="%.1f" y1="0" x2="%.1f" y2="%d" class="sparkline-deploy"/>`,
+				padding+dx, padding+dx, height,
+			)
+		}
+	}
+	fmt.Fprintf(&b,
+		`<polyline fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="%s"/>`,
+		strings.Join(points, " "))
+	b.WriteString(`</svg>`)
+	return template.HTML(b.String())
 }
 
 // ChartSVG renders a larger time-series chart with axis labels, a baseline
@@ -91,11 +108,20 @@ func ChartSVG(opts ChartOptions) template.HTML {
 		}
 	}
 	if opts.Baseline != nil {
-		if *opts.Baseline < minVal {
-			minVal = *opts.Baseline
+		bLow := *opts.Baseline
+		bHigh := *opts.Baseline
+		if opts.BaselineStddev != nil {
+			bLow -= *opts.BaselineStddev
+			if bLow < 0 {
+				bLow = 0
+			}
+			bHigh += *opts.BaselineStddev
 		}
-		if *opts.Baseline > maxVal {
-			maxVal = *opts.Baseline
+		if bLow < minVal {
+			minVal = bLow
+		}
+		if bHigh > maxVal {
+			maxVal = bHigh
 		}
 	}
 	span := maxVal - minVal
@@ -128,6 +154,26 @@ func ChartSVG(opts ChartOptions) template.HTML {
 		fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" class="chart-label-x" text-anchor="middle">%s</text>`, x, h-5, opts.Series[i].Label)
 	}
 
+	// Baseline band (±1σ) — rendered first so it sits behind the data line.
+	if opts.Baseline != nil && opts.BaselineStddev != nil && *opts.BaselineStddev > 0 {
+		upper := *opts.Baseline + *opts.BaselineStddev
+		lower := *opts.Baseline - *opts.BaselineStddev
+		if lower < 0 {
+			lower = 0 // clip to zero for low-traffic metrics
+		}
+		yUpper := padTop + drawH*(1-(upper-minVal)/span)
+		yLower := padTop + drawH*(1-(lower-minVal)/span)
+		// Clamp to chart area.
+		if yUpper < padTop {
+			yUpper = padTop
+		}
+		if yLower > padTop+drawH {
+			yLower = padTop + drawH
+		}
+		fmt.Fprintf(&b, `<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" class="chart-band"/>`,
+			padLeft, yUpper, drawW, yLower-yUpper)
+	}
+
 	// Data line.
 	points := make([]string, n)
 	for i, p := range opts.Series {
@@ -143,11 +189,14 @@ func ChartSVG(opts ChartOptions) template.HTML {
 		fmt.Fprintf(&b, `<line x1="%.0f" y1="%.0f" x2="%.0f" y2="%.0f" class="chart-baseline"/>`, padLeft, y, w-padRight, y)
 	}
 
-	// Deploy markers.
-	for _, idx := range opts.DeployIndices {
+	// Deploy markers with optional SHA labels.
+	for i, idx := range opts.DeployIndices {
 		if idx >= 0 && idx < n {
 			x := padLeft + drawW*float64(idx)/float64(max(1, n-1))
 			fmt.Fprintf(&b, `<line x1="%.0f" y1="%.0f" x2="%.0f" y2="%.0f" class="chart-deploy"/>`, x, padTop, x, padTop+drawH)
+			if i < len(opts.DeployLabels) && opts.DeployLabels[i] != "" {
+				fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" class="chart-deploy-label">%s</text>`, x+3, padTop+12, opts.DeployLabels[i])
+			}
 		}
 	}
 
@@ -157,10 +206,12 @@ func ChartSVG(opts ChartOptions) template.HTML {
 
 // ChartOptions configures a full time-series chart.
 type ChartOptions struct {
-	Width, Height int
-	Series        []ChartPoint
-	Baseline      *float64
-	DeployIndices []int // indices into Series where deploys occurred
+	Width, Height  int
+	Series         []ChartPoint
+	Baseline       *float64
+	BaselineStddev *float64 // when set, renders a ±1σ band around Baseline
+	DeployIndices  []int    // indices into Series where deploys occurred
+	DeployLabels   []string // short labels (SHA prefix) per deploy index
 }
 
 // ChartPoint is a single data point in a chart.
