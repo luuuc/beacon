@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/luuuc/beacon/internal/beacondb"
+	"github.com/luuuc/beacon/internal/config"
 )
 
 type Config struct {
@@ -64,16 +66,19 @@ func (c Config) withDefaults() Config {
 
 // Handler is the POST /api/events HTTP handler. It implements http.Handler.
 type Handler struct {
-	cfg     Config
-	adapter beacondb.Adapter
-	log     *slog.Logger
-	rl      *rateLimiter
-	idemp   *idempStore
-	now     func() time.Time
+	cfg            Config
+	adapter        beacondb.Adapter
+	log            *slog.Logger
+	rl             *rateLimiter
+	idemp          *idempStore
+	now            func() time.Time
+	filter         *config.PathFilter
+	filteredTotal  atomic.Int64
 }
 
 // NewHandler wires all the ingest dependencies into a single http.Handler.
-func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler {
+// The filter is optional — pass nil to disable path filtering.
+func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger, filter *config.PathFilter) *Handler {
 	cfg = cfg.withDefaults()
 	if log == nil {
 		log = slog.Default()
@@ -89,6 +94,7 @@ func NewHandler(cfg Config, adapter beacondb.Adapter, log *slog.Logger) *Handler
 		rl:      newRateLimiter(cfg.RatePerSecond, cfg.RatePerSecond),
 		idemp:   idemp,
 		now:     time.Now,
+		filter:  filter,
 	}
 }
 
@@ -158,6 +164,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		events = append(events, ev)
 	}
 
+	// Drop perf events whose path matches an excluded pattern. The filter
+	// runs after validation so malformed events are still rejected with 400.
+	if h.filter != nil {
+		// In-place filter: reuses backing array; events must not be read after this block.
+		filtered := events[:0]
+		var dropped int64
+		for _, ev := range events {
+			if ev.Kind == beacondb.KindPerf {
+				if p := extractPath(ev.Name); h.filter.ShouldExclude(p) {
+					dropped++
+					continue
+				}
+			}
+			filtered = append(filtered, ev)
+		}
+		if dropped > 0 {
+			h.filteredTotal.Add(dropped)
+		}
+		events = filtered
+	}
+
+	if len(events) == 0 {
+		// Entire batch was filtered out — still 202, nothing to write.
+		h.idemp.record(idempKey)
+		writeJSON(w, http.StatusAccepted, map[string]any{"received": 0, "filtered": true})
+		return
+	}
+
 	ctx := r.Context()
 	if _, err := h.adapter.InsertEvents(ctx, events); err != nil {
 		h.log.Error("ingest: InsertEvents", "err", err, "count", len(events))
@@ -203,6 +237,45 @@ func writeBadRequest(w http.ResponseWriter, msg string, rejected int) {
 	writeJSON(w, http.StatusBadRequest, map[string]any{
 		"error":           msg,
 		"events_rejected": rejected,
+	})
+}
+
+// extractPath returns the path portion of a perf event name like "GET /items/123".
+// If there's no space (unexpected), the full name is returned as-is.
+func extractPath(name string) string {
+	if i := strings.IndexByte(name, ' '); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// FilteredEventsTotal returns the cumulative count of events dropped by the
+// path filter since this handler was created.
+func (h *Handler) FilteredEventsTotal() int64 {
+	return h.filteredTotal.Load()
+}
+
+// FilterPatterns returns the active exclusion patterns, or nil if no filter
+// is configured.
+func (h *Handler) FilterPatterns() []string {
+	if h.filter == nil {
+		return nil
+	}
+	return h.filter.Patterns()
+}
+
+// StatsHandler returns an http.Handler for GET /api/stats that exposes
+// filter counters and active patterns.
+func (h *Handler) StatsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.cfg.AuthToken != "" && !checkBearer(r.Header.Get("Authorization"), h.cfg.AuthToken) {
+			writeError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"filtered_events_total": h.FilteredEventsTotal(),
+			"filter_patterns":       h.FilterPatterns(),
+		})
 	})
 }
 

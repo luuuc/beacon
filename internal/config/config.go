@@ -407,9 +407,11 @@ func NewPathFilter(cfg FilterConfig) *PathFilter {
 	return &PathFilter{patterns: patterns}
 }
 
-// Patterns returns the active exclusion patterns (for startup logging).
+// Patterns returns a copy of the active exclusion patterns (for startup logging).
 func (f *PathFilter) Patterns() []string {
-	return f.patterns
+	out := make([]string, len(f.patterns))
+	copy(out, f.patterns)
+	return out
 }
 
 // ShouldExclude reports whether the given path matches any exclusion pattern.

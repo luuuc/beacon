@@ -13,6 +13,7 @@ import (
 
 	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/beacondb/memfake"
+	"github.com/luuuc/beacon/internal/config"
 )
 
 // fixedNow is the reference clock used by every envelope test so clock-skew
@@ -25,7 +26,7 @@ func newTestHandler(t *testing.T, cfg Config) (*Handler, *memfake.Fake) {
 	if err := fake.Migrate(context.Background()); err != nil {
 		t.Fatalf("fake.Migrate: %v", err)
 	}
-	h := NewHandler(cfg, fake, nil)
+	h := NewHandler(cfg, fake, nil, nil)
 	h.now = func() time.Time { return fixedNow }
 	return h, fake
 }
@@ -433,7 +434,7 @@ func TestIdempotencyNotRecordedOnStorageFailure(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	adapter := &failingInsertAdapter{Fake: fake, failures: 1}
-	h := NewHandler(Config{}, adapter, nil)
+	h := NewHandler(Config{}, adapter, nil, nil)
 	h.now = func() time.Time { return fixedNow }
 
 	body := func() *bytes.Buffer {
@@ -569,6 +570,150 @@ func mustDecode(t *testing.T, body []byte, v any) {
 	t.Helper()
 	if err := json.Unmarshal(body, v); err != nil {
 		t.Fatalf("decode %q: %v", string(body), err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Path filter tests
+// ---------------------------------------------------------------------------
+
+func TestFilterDropsMatchingPerfEvents(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	filter := config.NewPathFilter(config.FilterConfig{}) // defaults: *.php, /wp-*, etc.
+	h := NewHandler(Config{}, fake, nil, filter)
+	h.now = func() time.Time { return fixedNow }
+
+	body := makeBatch(
+		map[string]any{
+			"kind":       "perf",
+			"name":       "GET /wp-class.php",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"duration_ms": 10, "status": 404},
+		},
+		map[string]any{
+			"kind":       "perf",
+			"name":       "GET /xmlrpc.php",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"duration_ms": 5, "status": 404},
+		},
+		map[string]any{
+			"kind":       "perf",
+			"name":       "GET /items/123",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"duration_ms": 42, "status": 200},
+		},
+		map[string]any{
+			"kind":       "outcome",
+			"name":       "signup.completed",
+			"created_at": fixedNow.Format(time.RFC3339),
+		},
+		map[string]any{
+			"kind":       "error",
+			"name":       "NoMethodError",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"fingerprint": "err123"},
+		},
+	)
+	rec := doPost(t, h, body, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Only the real perf event, the outcome, and the error should be written.
+	// Non-perf events are never filtered by path.
+	ctx := context.Background()
+	perfs, _ := fake.ListEvents(ctx, beacondb.EventFilter{Kind: beacondb.KindPerf})
+	if len(perfs) != 1 || perfs[0].Name != "GET /items/123" {
+		t.Errorf("perfs = %+v, want only GET /items/123", perfs)
+	}
+	outcomes, _ := fake.ListEvents(ctx, beacondb.EventFilter{Kind: beacondb.KindOutcome})
+	if len(outcomes) != 1 {
+		t.Errorf("outcomes = %+v, want 1", outcomes)
+	}
+	errs, _ := fake.ListEvents(ctx, beacondb.EventFilter{Kind: beacondb.KindError})
+	if len(errs) != 1 || errs[0].Fingerprint != "err123" {
+		t.Errorf("errors = %+v, want 1 with fingerprint err123", errs)
+	}
+
+	// Filtered counter should reflect 2 dropped events.
+	if got := h.FilteredEventsTotal(); got != 2 {
+		t.Errorf("FilteredEventsTotal() = %d, want 2", got)
+	}
+}
+
+func TestFilterAllDroppedReturns202(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	filter := config.NewPathFilter(config.FilterConfig{})
+	h := NewHandler(Config{}, fake, nil, filter)
+	h.now = func() time.Time { return fixedNow }
+
+	body := makeBatch(
+		map[string]any{
+			"kind":       "perf",
+			"name":       "GET /wp-login.php",
+			"created_at": fixedNow.Format(time.RFC3339),
+			"properties": map[string]any{"duration_ms": 1, "status": 404},
+		},
+	)
+	rec := doPost(t, h, body, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	mustDecode(t, rec.Body.Bytes(), &resp)
+	if resp["received"].(float64) != 0 {
+		t.Errorf("received = %v, want 0", resp["received"])
+	}
+	if filtered, ok := resp["filtered"].(bool); !ok || !filtered {
+		t.Errorf("expected filtered: true, got %v", resp)
+	}
+
+	// Nothing should be in the store.
+	events, _ := fake.ListEvents(context.Background(), beacondb.EventFilter{})
+	if len(events) != 0 {
+		t.Errorf("events = %d, want 0", len(events))
+	}
+}
+
+func TestStatsEndpoint(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	filter := config.NewPathFilter(config.FilterConfig{})
+	h := NewHandler(Config{}, fake, nil, filter)
+	h.now = func() time.Time { return fixedNow }
+
+	// POST a batch with one filtered event to bump the counter.
+	body := makeBatch(map[string]any{
+		"kind":       "perf",
+		"name":       "GET /probe.php",
+		"created_at": fixedNow.Format(time.RFC3339),
+		"properties": map[string]any{"duration_ms": 1, "status": 404},
+	})
+	doPost(t, h, body, nil)
+
+	// Hit the stats handler.
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	h.StatsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats code = %d", rec.Code)
+	}
+	var stats map[string]any
+	mustDecode(t, rec.Body.Bytes(), &stats)
+	if stats["filtered_events_total"].(float64) != 1 {
+		t.Errorf("filtered_events_total = %v, want 1", stats["filtered_events_total"])
+	}
+	patterns, ok := stats["filter_patterns"].([]any)
+	if !ok || len(patterns) == 0 {
+		t.Errorf("filter_patterns = %v, want non-empty", stats["filter_patterns"])
 	}
 }
 

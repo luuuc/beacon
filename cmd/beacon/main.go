@@ -149,6 +149,8 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		},
 	}, adapter, log)
 
+	pathFilter := config.NewPathFilter(cfg.Filter)
+
 	log.Info("beacon starting",
 		"version", version.Version,
 		"bind", cfg.Server.Bind,
@@ -157,6 +159,7 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		"adapter", kind,
 		"rollup_tick_seconds", cfg.Rollup.TickSeconds,
 		"retention_days", cfg.Retention.EventsDays,
+		"filter_patterns", pathFilter.Patterns(),
 	)
 
 	checks := server.ReadyChecks{
@@ -171,8 +174,9 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 		AuthToken:       cfg.Server.Auth.Token,
 		TrustXFF:        cfg.Ingest.TrustXFF,
 		IdempMaxEntries: cfg.Ingest.IdempMaxEntries,
-	}, adapter, log)
+	}, adapter, log, pathFilter)
 	srv.Mount("POST /api/events", ingestH)
+	srv.Mount("GET /api/stats", ingestH.StatsHandler())
 
 	readsH := reads.NewHandler(reads.Config{
 		AuthToken: cfg.Server.Auth.Token,
