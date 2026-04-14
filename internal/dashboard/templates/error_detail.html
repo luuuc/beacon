@@ -1,12 +1,33 @@
 {{define "content"}}
 <h1>{{.Name}}</h1>
-<p class="subtitle">Error detail — {{.Fingerprint}}</p>
-{{if .StackTrace}}
-<div class="stack-trace">
-  <h2>Sample stack trace</h2>
-  <pre>{{.StackTrace}}</pre>
+<p class="subtitle">{{if .Message}}{{.Message}}{{else}}Error detail{{end}} — {{.Fingerprint}}</p>
+
+{{if .HasSample}}
+<div class="request-context">
+  <h2>Request context</h2>
+  <dl class="context-grid">
+    {{if .ReqPath}}<div class="context-item"><dt>Path</dt><dd>{{if .ReqMethod}}<span class="http-method">{{.ReqMethod}}</span> {{end}}{{.ReqPath}}</dd></div>{{end}}
+    {{if .DeploySHA}}<div class="context-item"><dt>Deploy</dt><dd><code>{{.DeploySHA}}</code></dd></div>{{end}}
+    {{if .Environment}}<div class="context-item"><dt>Environment</dt><dd>{{.Environment}}</dd></div>{{end}}
+    {{if .RequestID}}<div class="context-item"><dt>Request ID</dt><dd><code>{{.RequestID}}</code></dd></div>{{end}}
+    {{if .FirstAppFrame}}<div class="context-item"><dt>First app frame</dt><dd><code class="app-frame-link">{{.FirstAppFrame}}</code></dd></div>{{end}}
+  </dl>
 </div>
 {{end}}
+
+{{if .HasSample}}
+  {{if .HighlightedTrace}}
+  <div class="stack-trace">
+    <h2>Sample stack trace</h2>
+    <pre>{{.HighlightedTrace}}</pre>
+  </div>
+  {{end}}
+{{else}}
+<div class="pruned-notice">
+  <p>Sample event pruned — raw error events are retained for 14 days. Rollup data (occurrences, timeline) is still available below.</p>
+</div>
+{{end}}
+
 {{if .Chart}}
 <div class="chart-container">{{.Chart}}</div>
 {{end}}

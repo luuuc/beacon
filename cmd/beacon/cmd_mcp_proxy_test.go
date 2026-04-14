@@ -319,8 +319,8 @@ func TestProxy_Integration_RealMCPServer(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &listResp); err != nil {
 		t.Fatalf("decode tools/list: %v", err)
 	}
-	if len(listResp.Result.Tools) != 7 {
-		t.Errorf("tools count = %d, want 7", len(listResp.Result.Tools))
+	if len(listResp.Result.Tools) != 8 {
+		t.Errorf("tools count = %d, want 8", len(listResp.Result.Tools))
 	}
 
 	// Verify tools/call returned a valid result (not an RPC error).
