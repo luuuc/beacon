@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "beacon-production": {
+      "command": "/Users/luc/go/bin/beacon",
+      "args": ["mcp", "proxy", "https://beacon.maket.store/mcp/rpc"],
+      "env": { "BEACON_AUTH_TOKEN": "${BEACON_MKT_PRODUCTION_TOKEN}" }
+    }
+  }
+}
