@@ -99,12 +99,13 @@ type Metric struct {
 	P50           *float64
 	P95           *float64
 	P99           *float64
-	Fingerprint   string         // error rollups only
-	Dimensions    map[string]any // nil == no dimensions
-	DimensionHash string         // SHA256 hex of canonical JSON; "" for empty
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	DismissedAt   *time.Time // non-nil means dismissed (anomaly records only)
+	Fingerprint         string         // error rollups only
+	IntroducedDeploySHA string         // set once on first error metric; "" otherwise
+	Dimensions          map[string]any // nil == no dimensions
+	DimensionHash       string         // SHA256 hex of canonical JSON; "" for empty
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DismissedAt         *time.Time // non-nil means dismissed (anomaly records only)
 }
 
 // EventFilter narrows ListEvents. Zero-value fields are unbounded, including

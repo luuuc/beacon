@@ -252,9 +252,9 @@ func (a *Adapter) DeleteEventsByKindOlderThan(ctx context.Context, kind beacondb
 const upsertMetricSQL = `
 INSERT INTO beacon_metrics
   (kind, name, period_kind, period_window, period_start, count, sum, p50, p95, p99,
-   fingerprint, dimensions, dimension_hash, created_at, updated_at)
+   fingerprint, dimensions, dimension_hash, introduced_deploy_sha, created_at, updated_at)
 VALUES
-  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW(), NOW())
+  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW(), NOW())
 ON CONFLICT (kind, name, period_kind, period_window, period_start, fingerprint, dimension_hash)
 DO UPDATE SET
   count      = EXCLUDED.count,
@@ -263,6 +263,7 @@ DO UPDATE SET
   p95        = EXCLUDED.p95,
   p99        = EXCLUDED.p99,
   dimensions = EXCLUDED.dimensions,
+  introduced_deploy_sha = COALESCE(beacon_metrics.introduced_deploy_sha, EXCLUDED.introduced_deploy_sha),
   updated_at = NOW()`
 
 func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) error {
@@ -284,7 +285,7 @@ func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) 
 		batch.Queue(upsertMetricSQL,
 			string(m.Kind), m.Name, string(m.PeriodKind), m.PeriodWindow, m.PeriodStart,
 			m.Count, m.Sum, m.P50, m.P95, m.P99,
-			m.Fingerprint, dims, m.DimensionHash,
+			m.Fingerprint, dims, m.DimensionHash, nilIfEmpty(m.IntroducedDeploySHA),
 		)
 	}
 	br := tx.SendBatch(ctx, batch)
@@ -336,7 +337,7 @@ func (a *Adapter) ListMetrics(ctx context.Context, filter beacondb.MetricFilter)
 
 	sql := `
 SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50, p95, p99,
-       fingerprint, dimensions, dimension_hash, created_at, updated_at
+       fingerprint, dimensions, dimension_hash, introduced_deploy_sha, created_at, updated_at
   FROM beacon_metrics`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
@@ -356,16 +357,20 @@ SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50
 		var m beacondb.Metric
 		var kind, pk string
 		var dims []byte
+		var introSHA *string
 		if err := rows.Scan(
 			&m.ID, &kind, &m.Name, &pk, &m.PeriodWindow, &m.PeriodStart,
 			&m.Count, &m.Sum, &m.P50, &m.P95, &m.P99,
-			&m.Fingerprint, &dims, &m.DimensionHash,
+			&m.Fingerprint, &dims, &m.DimensionHash, &introSHA,
 			&m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
 		m.Kind = beacondb.Kind(kind)
 		m.PeriodKind = beacondb.PeriodKind(pk)
+		if introSHA != nil {
+			m.IntroducedDeploySHA = *introSHA
+		}
 		if err := unmarshalJSON(dims, &m.Dimensions); err != nil {
 			return nil, err
 		}
@@ -390,6 +395,13 @@ func (a *Adapter) DismissAnomaly(ctx context.Context, id int64) error {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 func marshalJSON(v map[string]any) ([]byte, error) {
 	if v == nil {

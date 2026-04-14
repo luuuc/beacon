@@ -250,8 +250,8 @@ func (a *Adapter) DeleteEventsByKindOlderThan(ctx context.Context, kind beacondb
 const upsertMetricSQL = `
 INSERT INTO beacon_metrics
   (kind, name, period_kind, period_window, period_start, count, sum, p50, p95, p99,
-   fingerprint, dimensions, dimension_hash, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   fingerprint, dimensions, dimension_hash, introduced_deploy_sha, created_at, updated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT (kind, name, period_kind, period_window, period_start, fingerprint, dimension_hash)
 DO UPDATE SET
   count      = excluded.count,
@@ -260,6 +260,7 @@ DO UPDATE SET
   p95        = excluded.p95,
   p99        = excluded.p99,
   dimensions = excluded.dimensions,
+  introduced_deploy_sha = COALESCE(beacon_metrics.introduced_deploy_sha, excluded.introduced_deploy_sha),
   updated_at = excluded.updated_at`
 
 func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) error {
@@ -287,13 +288,20 @@ func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) 
 		if _, err := stmt.ExecContext(ctx,
 			string(m.Kind), m.Name, string(m.PeriodKind), m.PeriodWindow, m.PeriodStart.UnixNano(),
 			m.Count, m.Sum, m.P50, m.P95, m.P99,
-			m.Fingerprint, string(dims), m.DimensionHash,
+			m.Fingerprint, string(dims), m.DimensionHash, nilIfEmpty(m.IntroducedDeploySHA),
 			now, now,
 		); err != nil {
 			return fmt.Errorf("upsert metric[%d]: %w", i, err)
 		}
 	}
 	return tx.Commit()
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (a *Adapter) ListMetrics(ctx context.Context, filter beacondb.MetricFilter) ([]beacondb.Metric, error) {
@@ -335,7 +343,7 @@ func (a *Adapter) ListMetrics(ctx context.Context, filter beacondb.MetricFilter)
 
 	sqlStr := `
 SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50, p95, p99,
-       fingerprint, dimensions, dimension_hash, created_at, updated_at
+       fingerprint, dimensions, dimension_hash, introduced_deploy_sha, created_at, updated_at
   FROM beacon_metrics`
 	if len(where) > 0 {
 		sqlStr += " WHERE " + strings.Join(where, " AND ")
@@ -355,6 +363,7 @@ SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50
 		var (
 			m                              beacondb.Metric
 			kind, pk, dims                 string
+			introSHA                       sql.NullString
 			periodStartNS                  int64
 			sumN, p50N, p95N, p99N         sql.NullFloat64
 			createdNS, updatedNS           int64
@@ -362,13 +371,16 @@ SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50
 		if err := rows.Scan(
 			&m.ID, &kind, &m.Name, &pk, &m.PeriodWindow, &periodStartNS,
 			&m.Count, &sumN, &p50N, &p95N, &p99N,
-			&m.Fingerprint, &dims, &m.DimensionHash,
+			&m.Fingerprint, &dims, &m.DimensionHash, &introSHA,
 			&createdNS, &updatedNS,
 		); err != nil {
 			return nil, err
 		}
 		m.Kind = beacondb.Kind(kind)
 		m.PeriodKind = beacondb.PeriodKind(pk)
+		if introSHA.Valid {
+			m.IntroducedDeploySHA = introSHA.String
+		}
 		if sumN.Valid {
 			v := sumN.Float64
 			m.Sum = &v

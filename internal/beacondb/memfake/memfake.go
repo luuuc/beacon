@@ -163,6 +163,9 @@ func (f *Fake) UpsertMetrics(_ context.Context, metrics []beacondb.Metric) error
 			existing := f.metrics[matched]
 			m.ID = existing.ID
 			m.CreatedAt = existing.CreatedAt
+			if existing.IntroducedDeploySHA != "" && m.IntroducedDeploySHA == "" {
+				m.IntroducedDeploySHA = existing.IntroducedDeploySHA
+			}
 			m.UpdatedAt = now
 			f.metrics[matched] = m
 			continue
