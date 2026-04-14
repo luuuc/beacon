@@ -109,7 +109,7 @@ func Defaults() Config {
 			Anomaly: AnomalyConfig{
 				BaselineWindow:  "14d",
 				DetectionWindow: "24h",
-				SigmaThreshold:  2.0,
+				SigmaThreshold:  3.0,
 				MinVolume:       10,
 			},
 		},

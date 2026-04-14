@@ -312,6 +312,86 @@ func TestAnomaly_downwardDeviationSuppressed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Default 3σ threshold
+// ---------------------------------------------------------------------------
+
+func TestAnomaly_default3SigmaThreshold(t *testing.T) {
+	// Use zero-value AnomalyConfig so withDefaults() fills in the 3.0 default.
+	now := time.Date(2026, 4, 14, 4, 0, 0, 0, time.UTC)
+	baseTime := now.Add(-14 * 24 * time.Hour).Truncate(time.Hour)
+
+	t.Run("2.5sigma suppressed", func(t *testing.T) {
+		fake2 := memfake.New()
+		if err := fake2.Migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		w2 := NewWorker(Config{
+			TickInterval: time.Minute,
+			RetentionRaw: 14 * 24 * time.Hour,
+		}, fake2, nil)
+		w2.now = func() time.Time { return now }
+
+		// Baseline with variance: days with counts [8,12,8,12,...] → mean≈10, stddev≈2.
+		// Detection window: 15 events → deviation=(15-10)/2=2.5σ → below 3σ.
+		var metrics []beacondb.Metric
+		for d := 0; d < 13; d++ {
+			count := int64(8)
+			if d%2 == 0 {
+				count = 12
+			}
+			metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "moderate_spike", d, count, baseTime, nil))
+		}
+		metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "moderate_spike", 13, 15, baseTime, nil))
+		seedHourlyMetrics(t, fake2, metrics...)
+
+		if err := w2.detectAnomalies(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		anomalies, _ := fake2.ListMetrics(context.Background(), beacondb.MetricFilter{
+			PeriodKind: beacondb.PeriodAnomaly,
+		})
+		if len(anomalies) != 0 {
+			t.Errorf("anomalies = %d, want 0 (2.5σ below default 3σ threshold)", len(anomalies))
+		}
+	})
+
+	t.Run("3.5sigma fires", func(t *testing.T) {
+		fake3 := memfake.New()
+		if err := fake3.Migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		w3 := NewWorker(Config{
+			TickInterval: time.Minute,
+			RetentionRaw: 14 * 24 * time.Hour,
+		}, fake3, nil)
+		w3.now = func() time.Time { return now }
+
+		// Baseline with variance: [8,12,8,12,...] → mean≈10, stddev≈2.
+		// Detection window: 17 events → deviation=(17-10)/2=3.5σ → above 3σ.
+		var metrics []beacondb.Metric
+		for d := 0; d < 13; d++ {
+			count := int64(8)
+			if d%2 == 0 {
+				count = 12
+			}
+			metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "big_spike", d, count, baseTime, nil))
+		}
+		metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "big_spike", 13, 17, baseTime, nil))
+		seedHourlyMetrics(t, fake3, metrics...)
+
+		if err := w3.detectAnomalies(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		anomalies, _ := fake3.ListMetrics(context.Background(), beacondb.MetricFilter{
+			PeriodKind: beacondb.PeriodAnomaly,
+		})
+		if len(anomalies) != 1 {
+			t.Fatalf("anomalies = %d, want 1 (3.5σ above default 3σ threshold)", len(anomalies))
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // meanStddev unit tests
 // ---------------------------------------------------------------------------
 

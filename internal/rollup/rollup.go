@@ -45,7 +45,7 @@ type Config struct {
 type AnomalyConfig struct {
 	BaselineWindow  time.Duration // default 14d; trailing window for baseline computation
 	DetectionWindow time.Duration // default 24h; current window to compare against baseline
-	SigmaThreshold  float64       // default 2.0; sigma deviation to trigger anomaly
+	SigmaThreshold  float64       // default 3.0; sigma deviation to trigger anomaly
 	MinVolume       int64         // default 10; suppress anomalies on low-traffic metrics
 }
 
@@ -66,7 +66,7 @@ func (c Config) withDefaults() Config {
 		c.Anomaly.DetectionWindow = 24 * time.Hour
 	}
 	if c.Anomaly.SigmaThreshold <= 0 {
-		c.Anomaly.SigmaThreshold = 2.0
+		c.Anomaly.SigmaThreshold = 3.0
 	}
 	if c.Anomaly.MinVolume <= 0 {
 		c.Anomaly.MinVolume = 10
