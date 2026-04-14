@@ -754,3 +754,103 @@ func TestLandingAnomalyCard_withAnomaly(t *testing.T) {
 }
 
 func fp(v float64) *float64 { return &v }
+
+// ---------------------------------------------------------------------------
+// computeTrend
+// ---------------------------------------------------------------------------
+
+func TestComputeTrend(t *testing.T) {
+	cases := []struct {
+		name   string
+		points []reads.MetricPoint
+		want   string
+	}{
+		{"single point", []reads.MetricPoint{{Count: 5}}, "insufficient data"},
+		{"all zeros", []reads.MetricPoint{{Count: 0}, {Count: 0}}, "no occurrences"},
+		{"first half zero", []reads.MetricPoint{{Count: 0}, {Count: 3}}, "increasing (new)"},
+		{"increasing", []reads.MetricPoint{{Count: 2}, {Count: 2}, {Count: 5}, {Count: 5}}, "increasing"},
+		{"decreasing", []reads.MetricPoint{{Count: 10}, {Count: 10}, {Count: 2}, {Count: 2}}, "decreasing"},
+		{"stable", []reads.MetricPoint{{Count: 10}, {Count: 10}, {Count: 11}, {Count: 10}}, "stable"},
+		{"two points stable", []reads.MetricPoint{{Count: 5}, {Count: 5}}, "stable"},
+		{"two points increasing", []reads.MetricPoint{{Count: 2}, {Count: 10}}, "increasing"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := computeTrend(tc.points)
+			if got != tc.want {
+				t.Errorf("computeTrend = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// splitMethodPath
+// ---------------------------------------------------------------------------
+
+func TestSplitMethodPath(t *testing.T) {
+	cases := []struct {
+		input      string
+		wantMethod string
+		wantPath   string
+		wantNil    bool
+	}{
+		{"GET /items/47", "GET", "/items/47", false},
+		{"POST /api/events", "POST", "/api/events", false},
+		{"/just/a/path", "", "", true},
+		{"", "", "", true},
+		{"DELETE /items/1 extra", "DELETE", "/items/1 extra", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			parts := splitMethodPath(tc.input)
+			if tc.wantNil {
+				if parts != nil {
+					t.Errorf("splitMethodPath(%q) = %v, want nil", tc.input, parts)
+				}
+				return
+			}
+			if len(parts) != 2 {
+				t.Fatalf("splitMethodPath(%q) = %v, want 2 parts", tc.input, parts)
+			}
+			if parts[0] != tc.wantMethod || parts[1] != tc.wantPath {
+				t.Errorf("splitMethodPath(%q) = [%q, %q], want [%q, %q]",
+					tc.input, parts[0], parts[1], tc.wantMethod, tc.wantPath)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// highlightStackTrace
+// ---------------------------------------------------------------------------
+
+func TestHighlightStackTrace(t *testing.T) {
+	trace := "app/models/item.rb:42:in 'title'\n/gems/activesupport-7.0/lib/active_support.rb:10\napp/controllers/items_controller.rb:15"
+	result := string(highlightStackTrace(trace))
+
+	// App frames should get frame-app class.
+	if !strings.Contains(result, `<span class="frame-app">app/models/item.rb:42`) {
+		t.Error("first app frame not highlighted as frame-app")
+	}
+	if !strings.Contains(result, `<span class="frame-app">app/controllers/items_controller.rb:15`) {
+		t.Error("second app frame not highlighted as frame-app")
+	}
+
+	// Framework frame should get frame-framework class.
+	if !strings.Contains(result, `<span class="frame-framework">/gems/activesupport`) {
+		t.Error("framework frame not highlighted as frame-framework")
+	}
+}
+
+func TestHighlightStackTrace_escapesHTML(t *testing.T) {
+	trace := `app/models/<script>alert("xss")</script>.rb:1`
+	result := string(highlightStackTrace(trace))
+
+	if strings.Contains(result, "<script>") {
+		t.Error("HTML not escaped in stack trace output")
+	}
+	if !strings.Contains(result, "&lt;script&gt;") {
+		t.Error("expected escaped HTML entities")
+	}
+}
