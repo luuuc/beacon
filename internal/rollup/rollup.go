@@ -321,6 +321,19 @@ func (w *Worker) aggregateHour(ctx context.Context, hour time.Time) error {
 			DimensionHash: bk.dimensionHash,
 		}
 
+		// For error metrics, capture the deploy SHA from the earliest event
+		// in this bucket. The COALESCE in the upsert ensures this is only
+		// persisted on the first insert — subsequent upserts preserve the
+		// existing value.
+		if bk.kind == beacondb.KindError && bk.fingerprint != "" {
+			for _, e := range b.events {
+				if sha, _ := e.Context["deploy_sha"].(string); sha != "" {
+					m.IntroducedDeploySHA = sha
+					break
+				}
+			}
+		}
+
 		durations := make([]float64, 0, len(b.events))
 		var sum float64
 		for _, e := range b.events {

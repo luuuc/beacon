@@ -140,13 +140,14 @@ type ErrorSummary struct {
 // FirstSeen/LastSeen reflect the 7-day query window, not all-time. An
 // error active for 30 days will show first_seen as 7 days ago.
 type ErrorDetailResponse struct {
-	Fingerprint       string             `json:"fingerprint"`
-	Name              string             `json:"name"`
-	FirstSeen         string             `json:"first_seen"`
-	LastSeen          string             `json:"last_seen"`
-	Occurrences       int64              `json:"occurrences"`
-	HourlyOccurrences []MetricPoint      `json:"hourly_occurrences"`
-	SampleEvent       *ErrorDetailSample `json:"sample_event"`
+	Fingerprint         string             `json:"fingerprint"`
+	Name                string             `json:"name"`
+	FirstSeen           string             `json:"first_seen"`
+	LastSeen            string             `json:"last_seen"`
+	Occurrences         int64              `json:"occurrences"`
+	IntroducedDeploySHA string             `json:"introduced_deploy_sha,omitempty"`
+	HourlyOccurrences   []MetricPoint      `json:"hourly_occurrences"`
+	SampleEvent         *ErrorDetailSample `json:"sample_event"`
 }
 
 // ErrorDetailSample holds the fields extracted from a raw error event.
@@ -537,6 +538,7 @@ func (h *Handler) GetErrorDetail(ctx context.Context, fingerprint string) (*Erro
 	first := hourlies[0].PeriodStart
 	last := hourlies[0].PeriodStart
 	var total int64
+	var introSHA string
 	timeline := make([]MetricPoint, 0, len(hourlies))
 	for _, m := range hourlies {
 		if m.PeriodStart.Before(first) {
@@ -546,6 +548,9 @@ func (h *Handler) GetErrorDetail(ctx context.Context, fingerprint string) (*Erro
 			last = m.PeriodStart
 		}
 		total += m.Count
+		if introSHA == "" && m.IntroducedDeploySHA != "" {
+			introSHA = m.IntroducedDeploySHA
+		}
 		timeline = append(timeline, MetricPoint{
 			PeriodStart: m.PeriodStart.UTC().Format(time.RFC3339),
 			Count:       m.Count,
@@ -553,12 +558,13 @@ func (h *Handler) GetErrorDetail(ctx context.Context, fingerprint string) (*Erro
 	}
 
 	resp := &ErrorDetailResponse{
-		Fingerprint:       fingerprint,
-		Name:              name,
-		FirstSeen:         first.UTC().Format(time.RFC3339),
-		LastSeen:          last.UTC().Format(time.RFC3339),
-		Occurrences:       total,
-		HourlyOccurrences: timeline,
+		Fingerprint:         fingerprint,
+		Name:                name,
+		FirstSeen:           first.UTC().Format(time.RFC3339),
+		LastSeen:            last.UTC().Format(time.RFC3339),
+		Occurrences:         total,
+		IntroducedDeploySHA: introSHA,
+		HourlyOccurrences:   timeline,
 	}
 
 	// 2. Most recent sample event (may be pruned).

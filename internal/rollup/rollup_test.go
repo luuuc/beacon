@@ -646,3 +646,88 @@ func TestParseHHMM(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// introduced_deploy_sha
+// ---------------------------------------------------------------------------
+
+func TestAggregate_introducedDeploySHA(t *testing.T) {
+	hour := fixedNow.Truncate(time.Hour)
+	w, fake := newTestWorker(t, fixedNow)
+
+	// Two fingerprints, each with a different deploy SHA.
+	seedEvents(t, fake,
+		beacondb.Event{
+			Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "fp-A",
+			Context:   map[string]any{"deploy_sha": "sha-A1"},
+			CreatedAt: hour.Add(5 * time.Minute),
+		},
+		beacondb.Event{
+			Kind: beacondb.KindError, Name: "TypeError", Fingerprint: "fp-B",
+			Context:   map[string]any{"deploy_sha": "sha-B1"},
+			CreatedAt: hour.Add(10 * time.Minute),
+		},
+	)
+
+	if err := w.aggregateHour(context.Background(), hour); err != nil {
+		t.Fatalf("aggregate: %v", err)
+	}
+
+	metrics, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		Kind:       beacondb.KindError,
+		PeriodKind: beacondb.PeriodHour,
+	})
+	if len(metrics) != 2 {
+		t.Fatalf("metrics = %d, want 2", len(metrics))
+	}
+
+	shaByFP := map[string]string{}
+	for _, m := range metrics {
+		shaByFP[m.Fingerprint] = m.IntroducedDeploySHA
+	}
+	if shaByFP["fp-A"] != "sha-A1" {
+		t.Errorf("fp-A introduced_deploy_sha = %q, want sha-A1", shaByFP["fp-A"])
+	}
+	if shaByFP["fp-B"] != "sha-B1" {
+		t.Errorf("fp-B introduced_deploy_sha = %q, want sha-B1", shaByFP["fp-B"])
+	}
+}
+
+func TestAggregate_introducedDeploySHA_notOverwrittenOnReaggregation(t *testing.T) {
+	hour := fixedNow.Truncate(time.Hour)
+	w, fake := newTestWorker(t, fixedNow)
+
+	// First aggregation: fp-A introduced with sha-first.
+	seedEvents(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "fp-A",
+		Context:   map[string]any{"deploy_sha": "sha-first"},
+		CreatedAt: hour.Add(5 * time.Minute),
+	})
+	if err := w.aggregateHour(context.Background(), hour); err != nil {
+		t.Fatalf("aggregate 1: %v", err)
+	}
+
+	// Add another event in the same hour with a different deploy SHA.
+	seedEvents(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "fp-A",
+		Context:   map[string]any{"deploy_sha": "sha-second"},
+		CreatedAt: hour.Add(30 * time.Minute),
+	})
+	// Re-aggregate the same hour (same unique key → upsert with COALESCE).
+	if err := w.aggregateHour(context.Background(), hour); err != nil {
+		t.Fatalf("aggregate 2: %v", err)
+	}
+
+	metrics, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		Kind:        beacondb.KindError,
+		Fingerprint: "fp-A",
+		PeriodKind:  beacondb.PeriodHour,
+	})
+	if len(metrics) != 1 {
+		t.Fatalf("metrics = %d, want 1 (same hour, same key)", len(metrics))
+	}
+	if metrics[0].IntroducedDeploySHA != "sha-first" {
+		t.Errorf("introduced_deploy_sha = %q, want sha-first (COALESCE should preserve first value)",
+			metrics[0].IntroducedDeploySHA)
+	}
+}

@@ -813,6 +813,7 @@ func TestGetErrorDetail_happyPath(t *testing.T) {
 		Kind: beacondb.KindError, Name: "NoMethodError",
 		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
 		PeriodStart: hour1, Count: 2, Fingerprint: fp,
+		IntroducedDeploySHA: "deadbeef",
 	})
 	seedMetric(t, fake, beacondb.Metric{
 		Kind: beacondb.KindError, Name: "NoMethodError",
@@ -854,6 +855,9 @@ func TestGetErrorDetail_happyPath(t *testing.T) {
 	}
 	if len(resp.HourlyOccurrences) != 2 {
 		t.Errorf("hourly len = %d, want 2", len(resp.HourlyOccurrences))
+	}
+	if resp.IntroducedDeploySHA != "deadbeef" {
+		t.Errorf("introduced_deploy_sha = %q, want deadbeef", resp.IntroducedDeploySHA)
 	}
 
 	// Sample event fields.

@@ -89,9 +89,14 @@ func (d *Dashboard) handleErrorDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stats grid.
+	introLabel := "unknown"
+	if detail.IntroducedDeploySHA != "" {
+		introLabel = detail.IntroducedDeploySHA
+	}
 	stats := []stat{
 		{"Exception", detail.Name},
 		{"Fingerprint", detail.Fingerprint},
+		{"Introduced in deploy", introLabel},
 		{"First seen", detail.FirstSeen},
 		{"Last seen", detail.LastSeen},
 		{"Occurrences", fmt.Sprintf("%d", detail.Occurrences)},
