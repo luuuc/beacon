@@ -298,8 +298,14 @@ func TestPerformanceDetailPage(t *testing.T) {
 	if !strings.Contains(body, "perf.dashboard") {
 		t.Error("missing endpoint name")
 	}
-	if !strings.Contains(body, "chart") {
-		t.Error("missing chart SVG")
+	if !strings.Contains(body, "P95 Latency") {
+		t.Error("missing latency chart title")
+	}
+	if !strings.Contains(body, "Request Volume") {
+		t.Error("missing volume chart title")
+	}
+	if c := strings.Count(body, "class=\"chart\""); c != 2 {
+		t.Errorf("expected 2 chart SVGs, got %d", c)
 	}
 }
 

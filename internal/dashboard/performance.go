@@ -70,8 +70,8 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Build chart from P95 values and collect volume data.
-	var points []ChartPoint
+	// Build charts from P95 values and hourly counts.
+	var latencyPoints, volumePoints []ChartPoint
 	var p95Values []float64
 	var totalRequests int64
 	for _, pt := range resp.Data {
@@ -79,7 +79,8 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 		if pt.P95 != nil {
 			val = *pt.P95
 		}
-		points = append(points, ChartPoint{Label: pt.PeriodStart, Value: val})
+		latencyPoints = append(latencyPoints, ChartPoint{Label: pt.PeriodStart, Value: val})
+		volumePoints = append(volumePoints, ChartPoint{Label: pt.PeriodStart, Value: float64(pt.Count)})
 		p95Values = append(p95Values, val)
 		totalRequests += pt.Count
 	}
@@ -90,10 +91,14 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 		baseline = &resp.Baseline.HourlyCountMean
 	}
 
-	chart := ChartSVG(ChartOptions{
+	latencyChart := ChartSVG(ChartOptions{
 		Width: 800, Height: 250,
-		Series:   points,
+		Series:   latencyPoints,
 		Baseline: baseline,
+	})
+	volumeChart := ChartSVG(ChartOptions{
+		Width: 800, Height: 200,
+		Series: volumePoints,
 	})
 
 	p := message.NewPrinter(language.English)
@@ -110,11 +115,12 @@ func (d *Dashboard) handlePerformanceDetail(w http.ResponseWriter, r *http.Reque
 	stats = append(stats, stat{"Period", resp.PeriodKind})
 
 	d.render(w, r, "endpoint_detail.html", "", pageData(map[string]any{
-		"ActiveNav": "performance",
-		"Title":     name,
-		"Name":      name,
-		"Chart":     chart,
-		"Stats":     stats,
+		"ActiveNav":   "performance",
+		"Title":       name,
+		"Name":        name,
+		"Chart":       latencyChart,
+		"VolumeChart": volumeChart,
+		"Stats":       stats,
 	}))
 }
 
