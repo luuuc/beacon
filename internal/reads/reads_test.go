@@ -705,6 +705,92 @@ func TestHandleDismissAnomaly_HTTP(t *testing.T) {
 	}
 }
 
+func TestAnomalySummary_volumeShift(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /search",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 240, Sum: fp(12.0), P50: fp(80), P95: fp(13.3),
+		Fingerprint: "volume_shift",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "GET /search") {
+		t.Errorf("summary missing name: %q", s)
+	}
+	if !strings.Contains(s, "normal traffic") {
+		t.Errorf("summary missing 'normal traffic': %q", s)
+	}
+	if !strings.Contains(s, "240 vs ~80/day") {
+		t.Errorf("summary missing current vs baseline: %q", s)
+	}
+	if !strings.Contains(s, "12.0σ above baseline") {
+		t.Errorf("summary missing sigma parenthetical: %q", s)
+	}
+}
+
+func TestAnomalySummary_dimensionSpike(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindAmbient, Name: "GET /items/:id",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart:   fixedNow.Add(-1 * time.Hour),
+		Count:         47,
+		Sum:           fp(8.1),
+		P50:           fp(3),
+		P95:           fp(5.4),
+		Fingerprint:   "dimension_spike",
+		Dimensions:    map[string]any{"country": "DE"},
+		DimensionHash: "abc",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "country=DE") {
+		t.Errorf("summary missing dimension: %q", s)
+	}
+	if !strings.Contains(s, "jumped to 47") {
+		t.Errorf("summary missing 'jumped to': %q", s)
+	}
+	if !strings.Contains(s, "normally ~3/day") {
+		t.Errorf("summary missing baseline: %q", s)
+	}
+	if !strings.Contains(s, "8.1σ above baseline") {
+		t.Errorf("summary missing sigma: %q", s)
+	}
+}
+
+func TestAnomalySummary_zeroMeanFallback(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /new-endpoint",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 25, Sum: fp(5.0), P50: fp(0), P95: fp(0),
+		Fingerprint: "volume_shift",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "no prior baseline") {
+		t.Errorf("summary missing fallback text: %q", s)
+	}
+	if !strings.Contains(s, "25 events") {
+		t.Errorf("summary missing event count: %q", s)
+	}
+}
+
 func TestHandleAnomalies_emptyResponse(t *testing.T) {
 	h, _ := newTestHandler(t, Config{})
 	m := mux(h)

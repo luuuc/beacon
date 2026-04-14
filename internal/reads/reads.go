@@ -765,8 +765,7 @@ func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*A
 			stddev = *m.P95
 		}
 
-		summary := fmt.Sprintf("%s %s: %d in 24h vs baseline of %.0f",
-			m.Name, m.Fingerprint, m.Count, mean)
+		summary := anomalySummary(m.Fingerprint, m.Name, m.Dimensions, m.Count, mean, deviation)
 
 		entries = append(entries, AnomalyEntry{
 			ID:             m.ID,
@@ -830,6 +829,39 @@ func (h *Handler) handleDismissAnomaly(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// anomalySummary builds a human-scannable summary for an anomaly record.
+//
+//	volume_shift:    "GET /search saw 3× normal traffic (240 vs ~80/day) (12.0σ above baseline)"
+//	dimension_spike: "GET /items/:id from country=DE jumped to 47 (normally ~3/day) (8.1σ above baseline)"
+func anomalySummary(anomalyKind, name string, dims map[string]any, current int64, mean, sigma float64) string {
+	sigmaStr := fmt.Sprintf("(%.1fσ above baseline)", sigma)
+
+	if anomalyKind == "dimension_spike" && len(dims) > 0 {
+		// Build "dim1=val1, dim2=val2" string.
+		keys := make([]string, 0, len(dims))
+		for k := range dims {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, dims[k]))
+		}
+		dimStr := strings.Join(parts, ", ")
+		return fmt.Sprintf("%s from %s jumped to %d (normally ~%.0f/day) %s",
+			name, dimStr, current, mean, sigmaStr)
+	}
+
+	// Volume shift.
+	if mean > 0 {
+		multiplier := float64(current) / mean
+		return fmt.Sprintf("%s saw %.0f× normal traffic (%d vs ~%.0f/day) %s",
+			name, multiplier, current, mean, sigmaStr)
+	}
+	return fmt.Sprintf("%s saw %d events (no prior baseline) %s",
+		name, current, sigmaStr)
+}
+
 // helpers
 // ---------------------------------------------------------------------------
 

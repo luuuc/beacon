@@ -3,7 +3,7 @@
 *Make Beacon's data trustworthy by killing noise at the source and making anomalies actionable. Follow-up to pitch 01, cards 3 (anomaly detector), 4 (anomaly read endpoint + MCP tool), and 7 (anomaly dashboard page).*
 
 **Appetite:** small batch (~3 days)
-**Status:** Building
+**Status:** Shipped — pending PR
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/01-ambient-anomalies.md` (shipped the anomaly detector, `beacon.anomalies` MCP tool, and `/anomalies` dashboard page)
 **Related:** `definition/06-http-api.md` (MCP server contract, `/api/anomalies` endpoint), `definition/03-data-model.md` (anomaly records in `beacon_metrics`), `decisions/0002-maket-first-integration.md` (Maket as proof point)
@@ -133,4 +133,4 @@ Cards are in dependency order. Cards 1-3 are P0. Cards 4-5 are P1.
 
 - [x] **Anomaly dismiss** — add `dismissed_at` column to anomaly records in `beacon_metrics`. Dashboard: "×" button on anomaly cards, htmx DELETE to `/anomalies/:id/dismiss`. HTTP API: `DELETE /api/anomalies/:id`. `GetAnomalies` excludes dismissed records. *Done when:* dismissing an anomaly in the dashboard removes it from the list, a dismissed anomaly stays gone across page refreshes and API queries, and `DELETE /api/anomalies/:id` returns 200 with subsequent `GET /api/anomalies` excluding it.
 
-- [ ] **Smarter anomaly summaries** — rewrite the summary template in the anomaly detector to produce human-scannable text. Volume shifts: "X saw N× normal traffic (current vs ~baseline/day)". Dimension spikes: "X from dimension=value jumped to N (normally ~baseline/day)". σ as parenthetical. *Done when:* new summaries appear in both dashboard and MCP responses, and a test asserts the new format against a known anomaly record.
+- [x] **Smarter anomaly summaries** — rewrite the summary template in the anomaly detector to produce human-scannable text. Volume shifts: "X saw N× normal traffic (current vs ~baseline/day)". Dimension spikes: "X from dimension=value jumped to N (normally ~baseline/day)". σ as parenthetical. *Done when:* new summaries appear in both dashboard and MCP responses, and a test asserts the new format against a known anomaly record.
