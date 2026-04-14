@@ -3,7 +3,7 @@
 *Give the performance pillar enough context to answer "should I worry about this?" Follow-up to pitch 00 (perf capture + `beacon.perf_drift` MCP tool, cards 7-9), pitch 00d (performance dashboard pages, cards 6-7), and pitch 01a (bot filtering — must ship first to clean the data).*
 
 **Appetite:** small batch (~2 days)
-**Status:** Building
+**Status:** Shipped — pending PR
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/00-bootstrap.md` (cards 7-9: perf events, rollups, `beacon.perf_drift` MCP tool), `pitches/00d-dashboard.md` (cards 6-7: performance pillar page + detail), `pitches/01a-noise-and-anomaly-curation.md` (bot filtering — must ship first)
 **Related:** `definition/06-http-api.md` (`GET /api/perf/endpoints`, `beacon.perf_drift` MCP tool), `definition/03-data-model.md` (perf rollups: count, p50, p95, p99 per hour)
@@ -94,4 +94,4 @@ Both cards are P0.
 
 - [x] **Volume on perf cards + MCP** — add request count (sum of hourly counts in window) to performance list cards, performance detail stats, and `beacon.perf_drift` MCP response. Dashboard: "1,324 req/day" alongside P95 and drift on each card. MCP: `request_count` field on each endpoint. *Done when:* the performance card shows volume, the MCP response includes `request_count`, and a Go test asserts the field is present and correct.
 
-- [ ] **Volume chart on detail page** — add a request volume chart below the latency time-series chart on the performance detail page. Uses hourly `count` data from existing rollups. Same X-axis time range as the latency chart. Rendered via existing `ChartSVG` function. *Done when:* the detail page shows both latency and volume charts for a seeded endpoint. Manual browser check confirms layout at 375px and 1440px widths.
+- [x] **Volume chart on detail page** — add a request volume chart below the latency time-series chart on the performance detail page. Uses hourly `count` data from existing rollups. Same X-axis time range as the latency chart. Rendered via existing `ChartSVG` function. *Done when:* the detail page shows both latency and volume charts for a seeded endpoint. Manual browser check confirms layout at 375px and 1440px widths.
