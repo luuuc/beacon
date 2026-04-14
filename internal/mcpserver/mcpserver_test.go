@@ -118,13 +118,13 @@ func TestToolsList(t *testing.T) {
 	}
 	m := resp.Result.(map[string]any)
 	tools := m["tools"].([]any)
-	if len(tools) != 7 {
-		t.Fatalf("tools = %d, want 7", len(tools))
+	if len(tools) != 8 {
+		t.Fatalf("tools = %d, want 8", len(tools))
 	}
 	want := map[string]bool{
-		"beacon.metric": false, "beacon.errors": false, "beacon.perf_drift": false,
-		"beacon.compare": false, "beacon.outcome_check": false, "beacon.deploy_baseline": false,
-		"beacon.anomalies": false,
+		"beacon.metric": false, "beacon.errors": false, "beacon.error_detail": false,
+		"beacon.perf_drift": false, "beacon.compare": false, "beacon.outcome_check": false,
+		"beacon.deploy_baseline": false, "beacon.anomalies": false,
 	}
 	for _, raw := range tools {
 		tool := raw.(map[string]any)
@@ -399,5 +399,105 @@ func TestToolAnomalies_matchesHTTPSibling(t *testing.T) {
 	b, _ := json.Marshal(&viaMCP)
 	if string(a) != string(b) {
 		t.Errorf("MCP != HTTP:\n  http: %s\n  mcp:  %s", a, b)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// beacon.error_detail
+// ---------------------------------------------------------------------------
+
+func TestToolErrorDetail_happyPath(t *testing.T) {
+	srv, fake := newTestStack(t)
+	fpVal := "fp-detail-happy"
+	hour := fixedNow.Add(-2 * time.Hour).Truncate(time.Hour)
+
+	_ = fake.UpsertMetrics(context.Background(), []beacondb.Metric{
+		{Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: fpVal,
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: hour, Count: 3},
+	})
+	_, _ = fake.InsertEvents(context.Background(), []beacondb.Event{
+		{Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: fpVal,
+			Properties: map[string]any{
+				"message":         "undefined method 'foo'",
+				"first_app_frame": "app/models/bar.rb:10",
+				"stack_trace":     "app/models/bar.rb:10\nvendor/gems/baz.rb:5",
+			},
+			Context:   map[string]any{"deploy_sha": "abc123", "environment": "production"},
+			CreatedAt: fixedNow.Add(-1 * time.Hour),
+		},
+	})
+
+	// Direct query.
+	httpResp, err := srv.reads.GetErrorDetail(context.Background(), fpVal)
+	if err != nil {
+		t.Fatalf("GetErrorDetail: %v", err)
+	}
+
+	// MCP tool.
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.error_detail",
+		"arguments": map[string]any{"fingerprint": fpVal},
+	})
+	var viaMCP reads.ErrorDetailResponse
+	toolResultText(t, resp, &viaMCP)
+
+	a, _ := json.Marshal(httpResp)
+	b, _ := json.Marshal(&viaMCP)
+	if string(a) != string(b) {
+		t.Errorf("MCP != HTTP:\n  http: %s\n  mcp:  %s", a, b)
+	}
+	if viaMCP.SampleEvent == nil {
+		t.Fatal("sample_event is nil")
+	}
+	if viaMCP.SampleEvent.Message != "undefined method 'foo'" {
+		t.Errorf("message = %q", viaMCP.SampleEvent.Message)
+	}
+}
+
+func TestToolErrorDetail_notFound(t *testing.T) {
+	srv, _ := newTestStack(t)
+
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.error_detail",
+		"arguments": map[string]any{"fingerprint": "nonexistent"},
+	})
+	// Tool-level error → isError: true, not a JSON-RPC protocol error.
+	if resp.Error != nil {
+		t.Fatalf("expected tool error, got rpc error: %+v", resp.Error)
+	}
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true, got %+v", m)
+	}
+}
+
+func TestToolErrorDetail_pruned(t *testing.T) {
+	srv, fake := newTestStack(t)
+	fpVal := "fp-detail-pruned"
+	hour := fixedNow.Add(-2 * time.Hour).Truncate(time.Hour)
+
+	// Metrics exist but no raw events (pruned).
+	_ = fake.UpsertMetrics(context.Background(), []beacondb.Metric{
+		{Kind: beacondb.KindError, Name: "TimeoutError", Fingerprint: fpVal,
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: hour, Count: 7},
+	})
+
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.error_detail",
+		"arguments": map[string]any{"fingerprint": fpVal},
+	})
+	var viaMCP reads.ErrorDetailResponse
+	toolResultText(t, resp, &viaMCP)
+
+	if viaMCP.Fingerprint != fpVal {
+		t.Errorf("fingerprint = %q", viaMCP.Fingerprint)
+	}
+	if viaMCP.Occurrences != 7 {
+		t.Errorf("occurrences = %d, want 7", viaMCP.Occurrences)
+	}
+	if viaMCP.SampleEvent != nil {
+		t.Errorf("sample_event should be nil (pruned), got %+v", viaMCP.SampleEvent)
 	}
 }

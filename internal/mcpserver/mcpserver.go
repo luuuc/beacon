@@ -269,6 +269,19 @@ func (s *Server) registerTools() {
 	})
 
 	s.register(toolDef{
+		Name:        "beacon.error_detail",
+		Description: "Get the full investigation payload for a single error fingerprint: summary, sample event (stack trace, request context), and hourly occurrence timeline.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"fingerprint": {"type": "string", "description": "The error fingerprint (SHA1 hash)."}
+			},
+			"required": ["fingerprint"]
+		}`),
+		handler: s.toolErrorDetail,
+	})
+
+	s.register(toolDef{
 		Name:        "beacon.perf_drift",
 		Description: "List endpoints sorted by performance drift from the 30d baseline.",
 		InputSchema: json.RawMessage(`{
@@ -379,6 +392,16 @@ func (s *Server) toolErrors(ctx context.Context, args json.RawMessage) (any, err
 		Since:   window,
 		NewOnly: p.NewOnly,
 	})
+}
+
+func (s *Server) toolErrorDetail(ctx context.Context, args json.RawMessage) (any, error) {
+	var p struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	return s.reads.GetErrorDetail(ctx, p.Fingerprint)
 }
 
 func (s *Server) toolPerfDrift(ctx context.Context, args json.RawMessage) (any, error) {
