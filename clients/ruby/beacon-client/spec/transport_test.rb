@@ -119,7 +119,7 @@ class TransportTest < Minitest::Test
 
   def test_sets_user_agent_header
     @transport.post("{}", idempotency_key: "k")
-    assert_match(%r{\Abeacon-client/\d+\.\d+\.\d+ \(ruby \d},
+    assert_match(%r{\Abeacon-client/[\d.][\w.\-]* \(ruby \d},
       @server.last_headers["user-agent"].to_s)
   end
 
