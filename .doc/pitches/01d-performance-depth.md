@@ -3,7 +3,7 @@
 *Give the performance pillar enough context to answer "should I worry about this?" Follow-up to pitch 00 (perf capture + `beacon.perf_drift` MCP tool, cards 7-9), pitch 00d (performance dashboard pages, cards 6-7), and pitch 01a (bot filtering — must ship first to clean the data).*
 
 **Appetite:** small batch (~2 days)
-**Status:** Shipped — pending PR
+**Status:** Shipped
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/00-bootstrap.md` (cards 7-9: perf events, rollups, `beacon.perf_drift` MCP tool), `pitches/00d-dashboard.md` (cards 6-7: performance pillar page + detail), `pitches/01a-noise-and-anomaly-curation.md` (bot filtering — must ship first)
 **Related:** `definition/06-http-api.md` (`GET /api/perf/endpoints`, `beacon.perf_drift` MCP tool), `definition/03-data-model.md` (perf rollups: count, p50, p95, p99 per hour)

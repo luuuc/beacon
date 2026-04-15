@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  goreleaser-check:
+    name: Validate GoReleaser config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
+
   pg-bench:
     name: beacon-bench against Postgres
     runs-on: ubuntu-latest
