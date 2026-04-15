@@ -120,8 +120,29 @@ jobs:
           docker run --rm --platform linux/amd64 "$IMAGE" version
           docker run --rm --platform linux/amd64 "$IMAGE" help
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create "${{ github.ref_name }}" --generate-notes --latest
+      # GitHub Release is now created by the goreleaser job below.
+      # This job only builds + pushes the Docker image.
+
+  goreleaser:
+    name: Build platform binaries + GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # GoReleaser needs full history for changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
