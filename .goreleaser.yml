@@ -26,8 +26,8 @@ builds:
 
 archives:
   - id: beacon
-    builds: [beacon]
-    format: tar.gz
+    ids: [beacon]
+    formats: [tar.gz]
     name_template: "beacon_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
