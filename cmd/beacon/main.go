@@ -39,6 +39,7 @@ Usage:
 
 Commands:
   serve       Run the HTTP server (API + MCP + dashboard) and rollup worker
+  init        Generate starter files for a new installation
   rollup      Run or recompute rollups (not yet implemented)
   baselines   Manage baselines (not yet implemented)
   mcp proxy   Stdio-to-HTTP proxy for MCP clients (Claude Code, etc.)
@@ -58,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "serve":
 		return cmdServe(rest, log, stderr)
+	case "init":
+		return cmdInit(rest, stdout, stderr)
 	case "rollup":
 		return cmdRollup(rest, log, stderr)
 	case "baselines":
