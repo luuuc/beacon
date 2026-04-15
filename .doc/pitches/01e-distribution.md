@@ -3,7 +3,7 @@
 *Make Beacon installable by someone who isn't the person who built it. Follow-up to pitch 00 (Docker image, `go install`), pitch 00c (`beacon mcp proxy` — requires the binary on the developer's machine), and pitch 00d (binary-hosted dashboard — the binary IS the product now).*
 
 **Appetite:** small batch (~2 days)
-**Status:** Building
+**Status:** Shipped — pending PR
 **Owner:** Solo founder + AI producers
 **Predecessor:** `pitches/00-bootstrap.md` (Docker image at `ghcr.io/luuuc/beacon`, `go install` path), `pitches/00c-mcp-client-access.md` (stdio proxy requires binary on developer's host), `pitches/00d-dashboard.md` (dashboard embedded in binary — the binary is the complete product)
 **Related:** `definition/04-deployment.md` (deployment shapes: Kamal, Docker, systemd, bare binary), `definition/08-ai-workflow.md` (step 0: "install the `beacon` binary on your machine"), `decisions/0002-maket-first-integration.md` (Maket → external users rollout — this pitch enables the "external users" step)
@@ -135,6 +135,6 @@ All cards are P0.
 
 - [x] **GoReleaser config + CI workflow** — add `.goreleaser.yml` (builds for darwin-arm64, darwin-amd64, linux-arm64, linux-amd64; archives as tar.gz; uploads to GitHub Release with checksums). Add or extend the GitHub Actions workflow to run GoReleaser on `v*` tag push. *Done when:* a tag push produces a GitHub Release with four platform binaries and a checksums file.
 
-- [ ] **Install script** — add `install.sh` to the repo root. Detects OS/arch, fetches latest release, downloads binary and checksums file, verifies SHA256 checksum (`sha256sum` on Linux, `shasum -a 256` on macOS), installs to `/usr/local/bin/beacon` (or `~/.local/bin`), makes executable, prints version. *Done when:* `curl -fsSL .../install.sh | sh` on macOS arm64 installs a working `beacon` binary with verified checksum and `beacon version` prints the correct version.
+- [x] **Install script** — add `install.sh` to the repo root. Detects OS/arch, fetches latest release, downloads binary and checksums file, verifies SHA256 checksum (`sha256sum` on Linux, `shasum -a 256` on macOS), installs to `/usr/local/bin/beacon` (or `~/.local/bin`), makes executable, prints version. *Done when:* `curl -fsSL .../install.sh | sh` on macOS arm64 installs a working `beacon` binary with verified checksum and `beacon version` prints the correct version.
 
-- [ ] **`beacon init` subcommand** — new subcommand in `cmd/beacon/`. Generates `docker-compose.yml`, `.mcp.json`, and optionally `config/initializers/beacon.rb`. Flags: `--database` (required: postgres/mysql/sqlite), `--ruby`, `--endpoint`. No auto-detection — the user states what they want. Prints to stdout or writes files (never overwrites). Includes "next steps" message. *Done when:* `beacon init --database postgres --ruby` produces three valid files, and `docker compose up -d` with the generated compose file starts a working Beacon instance.
+- [x] **`beacon init` subcommand** — new subcommand in `cmd/beacon/`. Generates `docker-compose.yml`, `.mcp.json`, and optionally `config/initializers/beacon.rb`. Flags: `--database` (required: postgres/mysql/sqlite), `--ruby`, `--endpoint`. No auto-detection — the user states what they want. Prints to stdout or writes files (never overwrites). Includes "next steps" message. *Done when:* `beacon init --database postgres --ruby` produces three valid files, and `docker compose up -d` with the generated compose file starts a working Beacon instance.
