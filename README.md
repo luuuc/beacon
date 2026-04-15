@@ -67,16 +67,33 @@ Both are 50× under the committed 50 µs ceiling. The Rack middleware allocates 
 
 See the deploy recipes linked in the operator docs shipped with the binary.
 
-## AI agent access (MCP)
-
-AI code tools query Beacon via MCP over a stdio proxy baked into the binary. Install the binary on your dev machine, then point your tool's MCP config at it.
+## Install
 
 ```bash
-# Install
+# One-line install (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/luuuc/beacon/main/install.sh | sh
+
+# Or with Go
 go install github.com/luuuc/beacon/cmd/beacon@latest
 ```
 
-Add a `.mcp.json` to your project root:
+Then generate starter files for your project:
+
+```bash
+beacon init --database postgres --ruby
+```
+
+This creates `docker-compose.yml`, `.mcp.json`, and `config/initializers/beacon.rb`. Then:
+
+```bash
+docker compose up -d && bundle add beacon-client && rails s
+```
+
+See `beacon init -h` for flags (`--database postgres|mysql|sqlite`, `--ruby`, `--endpoint`).
+
+## AI agent access (MCP)
+
+AI code tools query Beacon via MCP over a stdio proxy baked into the binary. `beacon init` generates the `.mcp.json` for you, or add it manually:
 
 ```json
 {
@@ -84,7 +101,7 @@ Add a `.mcp.json` to your project root:
     "beacon": {
       "command": "beacon",
       "args": ["mcp", "proxy", "http://localhost:4680/mcp/rpc"],
-      "env": { "BEACON_AUTH_TOKEN": "devtoken" }
+      "env": { "BEACON_AUTH_TOKEN": "" }
     }
   }
 }
