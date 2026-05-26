@@ -157,28 +157,248 @@ func TestLandingPageWithData(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	// Should have three headline cards.
-	if !strings.Contains(body, "Outcomes") {
-		t.Error("missing Outcomes card")
+	// Pillar status strip shows all four pillars.
+	for _, pillar := range []string{"Outcomes", "Performance", "Errors", "Anomalies"} {
+		if !strings.Contains(body, pillar) {
+			t.Errorf("missing %s in pillar status strip", pillar)
+		}
 	}
-	if !strings.Contains(body, "signup.completed") {
-		t.Error("missing signup.completed in outcomes card")
+	// No-deploy fallback: should prompt for deploy.shipped.
+	if !strings.Contains(body, "deploy.shipped") {
+		t.Error("missing deploy.shipped fallback message")
 	}
-	if !strings.Contains(body, "Performance") {
-		t.Error("missing Performance card")
+}
+
+func TestLandingDeployCentric(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	// Seed a deploy event.
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind:      beacondb.KindOutcome,
+		Name:      "deploy.shipped",
+		Context:   map[string]any{"deploy_sha": "abc12345def"},
+		CreatedAt: fixedNow.Add(-2 * time.Hour),
+	}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(body, "GET /dashboard") {
-		t.Error("missing GET /dashboard in performance card")
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "abc12345") {
+		t.Error("deploy hero should show truncated SHA")
 	}
-	if !strings.Contains(body, "Errors") {
-		t.Error("missing Errors card")
+	if !strings.Contains(body, "Latest deploy") {
+		t.Error("deploy hero should show 'Latest deploy' eyebrow")
 	}
-	if !strings.Contains(body, "NoMethodError") {
-		t.Error("missing NoMethodError in errors card")
+	if !strings.Contains(body, "Healthy") {
+		t.Error("deploy with no regressions should show Healthy verdict")
 	}
-	// Anomalies card should always appear (calm state if no anomalies).
-	if !strings.Contains(body, "Anomalies") {
-		t.Error("missing Anomalies card")
+	if !strings.Contains(body, "Pillar status") {
+		t.Error("page should show pillar status section")
+	}
+}
+
+func TestLandingDeployWithRegressions(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	// Two deploys: latest and one historical.
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{
+		{
+			Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+			Context:   map[string]any{"deploy_sha": "latest11sha"},
+			CreatedAt: fixedNow.Add(-2 * time.Hour),
+		},
+		{
+			Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+			Context:   map[string]any{"deploy_sha": "older222sha"},
+			CreatedAt: fixedNow.Add(-48 * time.Hour),
+		},
+	})
+
+	base := fixedNow.Add(-30 * 24 * time.Hour).Truncate(time.Hour)
+
+	// Seed perf data: baseline ~100ms with variance, then spike to 500ms.
+	for i := 0; i < 30*24; i++ {
+		p95 := 100.0 + float64(i%5)*4.0 // 100-116ms with stddev ~6
+		if i >= 29*24 {
+			p95 = 500.0
+		}
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "POST /checkout",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       50, P95: &p95,
+		}})
+	}
+
+	// Seed perf data that improved: baseline ~200ms, now 50ms.
+	for i := 0; i < 30*24; i++ {
+		p95 := 200.0 + float64(i%5)*4.0 // 200-216ms with stddev ~6
+		if i >= 29*24 {
+			p95 = 50.0
+		}
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "GET /search",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       100, P95: &p95,
+		}})
+	}
+
+	// Seed outcome drop: baseline ~10/hour with variance, now 2/hour.
+	for i := 0; i < 30*24; i++ {
+		count := int64(10 + i%3) // 10-12 with some variance
+		if i >= 29*24 {
+			count = 2
+		}
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindOutcome, Name: "listing.created",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       count,
+		}})
+	}
+
+	// Seed a new error introduced by the older deploy SHA.
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "NoMethodError", Fingerprint: "err001",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-2 * time.Hour).Truncate(time.Hour),
+		Count:       5,
+	}})
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindError, Name: "NoMethodError",
+		Fingerprint: "err001",
+		Context:     map[string]any{"deploy_sha": "older222sha"},
+		CreatedAt:   fixedNow.Add(-47 * time.Hour),
+	}})
+
+	// Seed an anomaly.
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindAmbient, Name: "http_request",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 100, Sum: fp(12.4), P50: fp(10), P95: fp(1),
+		Fingerprint: "volume_shift",
+	}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Latest deploy hero.
+	if !strings.Contains(body, "latest11") {
+		t.Error("should show latest deploy SHA")
+	}
+	// Should show regressions (perf spike).
+	if !strings.Contains(body, "POST /checkout") {
+		t.Error("should show regressed endpoint")
+	}
+	if !strings.Contains(body, "Regressions") {
+		t.Error("should show regressions group")
+	}
+	// Should show improvements.
+	if !strings.Contains(body, "Improvements") {
+		t.Error("should show improvements group")
+	}
+	if !strings.Contains(body, "GET /search") {
+		t.Error("should show improved endpoint")
+	}
+	// Deploy history should show older deploy.
+	if !strings.Contains(body, "older222") {
+		t.Error("deploy history should show older SHA")
+	}
+	if !strings.Contains(body, "Deploy history") {
+		t.Error("should have deploy history section")
+	}
+	// Pillar status should reflect regressions.
+	if !strings.Contains(body, "regression") {
+		t.Error("perf pillar should show regression status")
+	}
+	// Anomaly pillar should show open count.
+	if !strings.Contains(body, "1 open") {
+		t.Error("anomaly pillar should show open count")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for landing helpers
+// ---------------------------------------------------------------------------
+
+func TestComputeVerdict(t *testing.T) {
+	cases := []struct {
+		name  string
+		regs  []deploySignal
+		label string
+		tone  string
+	}{
+		{"no regressions", nil, "Healthy", "ok"},
+		{"med regressions only", []deploySignal{{Tone: "med"}, {Tone: "med"}}, "Drifting", "med"},
+		{"one high regression", []deploySignal{{Tone: "high"}}, "Watch", "high"},
+		{"mixed", []deploySignal{{Tone: "med"}, {Tone: "high"}}, "Watch", "high"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := computeVerdict(tc.regs)
+			if v.Label != tc.label {
+				t.Errorf("verdict label = %q, want %q", v.Label, tc.label)
+			}
+			if v.Tone != tc.tone {
+				t.Errorf("verdict tone = %q, want %q", v.Tone, tc.tone)
+			}
+		})
+	}
+}
+
+func TestSigmaTone(t *testing.T) {
+	if got := sigmaTone(3.0); got != "med" {
+		t.Errorf("sigmaTone(3.0) = %q, want med", got)
+	}
+	if got := sigmaTone(6.0); got != "high" {
+		t.Errorf("sigmaTone(6.0) = %q, want high", got)
+	}
+	if got := sigmaTone(-6.0); got != "high" {
+		t.Errorf("sigmaTone(-6.0) = %q, want high", got)
+	}
+}
+
+func TestShortSHA(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"abc12345def67890", "abc12345"},
+		{"short", "short"},
+		{"12345678", "12345678"},
+		{"", "unknown"},
+	}
+	for _, tc := range cases {
+		if got := shortSHA(tc.in); got != tc.want {
+			t.Errorf("shortSHA(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPlural(t *testing.T) {
+	if got := plural(1); got != "" {
+		t.Errorf("plural(1) = %q, want empty", got)
+	}
+	if got := plural(0); got != "s" {
+		t.Errorf("plural(0) = %q, want s", got)
+	}
+	if got := plural(5); got != "s" {
+		t.Errorf("plural(5) = %q, want s", got)
 	}
 }
 
@@ -819,7 +1039,7 @@ func TestAnomaliesPage_outcomeDropBadge(t *testing.T) {
 	}
 }
 
-func TestLandingAnomalyCard_withAnomaly(t *testing.T) {
+func TestLandingAnomalyPillarStatus(t *testing.T) {
 	_, fake, mux := newTestDashboardWithFake(t, "")
 	ctx := context.Background()
 
@@ -837,10 +1057,10 @@ func TestLandingAnomalyCard_withAnomaly(t *testing.T) {
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "http_request") {
-		t.Error("landing anomaly card should show top anomaly name")
+		t.Error("pillar status should show top anomaly name")
 	}
-	if !strings.Contains(body, "deviation") {
-		t.Error("landing anomaly card should show deviation info")
+	if !strings.Contains(body, "open") {
+		t.Error("pillar status should show anomaly count")
 	}
 }
 
@@ -1465,22 +1685,25 @@ func TestSigmaDriftLabel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// formatDrift
+// relativeTime
 // ---------------------------------------------------------------------------
 
-func TestFormatDrift(t *testing.T) {
+func TestRelativeTime(t *testing.T) {
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		pct  float64
+		t    time.Time
 		want string
 	}{
-		{0.5, "flat"},
-		{25, "↑ 25%"},
-		{-10, "↓ 10%"},
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(-5 * time.Minute), "5m ago"},
+		{now.Add(-3 * time.Hour), "3h ago"},
+		{now.Add(-25 * time.Hour), "yesterday"},
+		{now.Add(-72 * time.Hour), "3 days ago"},
 	}
 	for _, tc := range cases {
-		got := formatDrift(tc.pct)
+		got := relativeTime(tc.t, now)
 		if got != tc.want {
-			t.Errorf("formatDrift(%v) = %q, want %q", tc.pct, got, tc.want)
+			t.Errorf("relativeTime(%v) = %q, want %q", tc.t, got, tc.want)
 		}
 	}
 }
