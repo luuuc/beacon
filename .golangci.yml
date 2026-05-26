@@ -1,0 +1,72 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - gosec
+    - ineffassign
+    - unconvert
+    - gocritic
+    - exhaustive
+    - unused
+    - misspell
+    - dupword
+    - revive
+    - nolintlint
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    rules:
+      # dupword: SQL and test fixtures often repeat words legitimately
+      - linters: [dupword]
+        path: _test\.go
+      # gosec: test files legitimately use weak RNG, broad perms, variable paths
+      - linters: [gosec]
+        path: _test\.go
+      # gosec: benchmark tool constructs localhost URLs and spawns the beacon binary from CLI flags
+      - linters: [gosec]
+        text: "G107:"
+      - linters: [gosec]
+        text: "G204:"
+      # gosec: int→int32 for PID and pool size — realistic values never overflow
+      - linters: [gosec]
+        text: "G115:"
+      # gosec: cookies set Secure conditionally on r.TLS; gosec can't see that
+      - linters: [gosec]
+        text: "G124:"
+      # gosec: LIMIT clause concatenated from int, not user input
+      - linters: [gosec]
+        text: "G202:"
+      # gosec: template.HTML from server-generated floats/strings, not user input
+      - linters: [gosec]
+        text: "G203:"
+      # gosec: init writes project files at standard 0o755/0o644 perms
+      - linters: [gosec]
+        text: "G301:"
+      - linters: [gosec]
+        text: "G306:"
+      # gosec: config loader reads a user-specified path — inherent to any CLI
+      - linters: [gosec]
+        text: "G304:"
+      # gosec: SHA-1 used for content fingerprinting, not cryptographic security
+      - linters: [gosec]
+        text: "G401:"
+      - linters: [gosec]
+        text: "G505:"
+      # revive: don't require doc comments on every export
+      - linters: [revive]
+        text: "exported: "
+      - linters: [revive]
+        text: "package-comments: "
+      # revive: blank imports are used for side-effect registration (database drivers)
+      - linters: [revive]
+        text: "blank-imports: "
+      # revive: indent-error-flow is noisy in handler code
+      - linters: [revive]
+        text: "indent-error-flow: "
