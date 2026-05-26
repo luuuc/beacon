@@ -684,8 +684,8 @@ func TestAnomaliesPage_rendersSeededAnomalies(t *testing.T) {
 	if !strings.Contains(body, "http_request") {
 		t.Error("missing anomaly name in page")
 	}
-	if !strings.Contains(body, "volume_shift") {
-		t.Error("missing anomaly kind badge")
+	if !strings.Contains(body, "VOLUME SHIFT") {
+		t.Error("missing anomaly kind label")
 	}
 	if !strings.Contains(body, "5.0σ") {
 		t.Error("missing sigma value")
@@ -758,11 +758,11 @@ func TestAnomaliesPage_perfDriftBadge(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "badge-drift") {
-		t.Error("missing badge-drift class")
+	if !strings.Contains(body, "ala-pillar-performance") {
+		t.Error("missing performance pillar badge")
 	}
-	if !strings.Contains(body, "perf_drift") {
-		t.Error("missing perf_drift badge text")
+	if !strings.Contains(body, "PERF DRIFT") {
+		t.Error("missing PERF DRIFT kind label")
 	}
 	if !strings.Contains(body, "p95") {
 		t.Error("missing p95 latency display")
@@ -786,11 +786,11 @@ func TestAnomaliesPage_errorRateSpikeBadge(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "badge-error") {
-		t.Error("missing badge-error class")
+	if !strings.Contains(body, "ala-pillar-errors") {
+		t.Error("missing errors pillar badge")
 	}
-	if !strings.Contains(body, "error_rate_spike") {
-		t.Error("missing error_rate_spike badge text")
+	if !strings.Contains(body, "ERROR SPIKE") {
+		t.Error("missing ERROR SPIKE kind label")
 	}
 }
 
@@ -811,11 +811,11 @@ func TestAnomaliesPage_outcomeDropBadge(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "badge-drop") {
-		t.Error("missing badge-drop class")
+	if !strings.Contains(body, "ala-pillar-outcomes") {
+		t.Error("missing outcomes pillar badge")
 	}
-	if !strings.Contains(body, "outcome_drop") {
-		t.Error("missing outcome_drop badge text")
+	if !strings.Contains(body, "OUTCOME DROP") {
+		t.Error("missing OUTCOME DROP kind label")
 	}
 }
 
@@ -1509,31 +1509,232 @@ func TestLinkForAnomaly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// toAnomalyCard
+// toAnomalyRow
 // ---------------------------------------------------------------------------
 
-func TestToAnomalyCard(t *testing.T) {
-	card := toAnomalyCard(reads.AnomalyEntry{
+func TestToAnomalyRow(t *testing.T) {
+	row := toAnomalyRow(reads.AnomalyEntry{
 		ID: 1, AnomalyKind: "dimension_spike", MetricKind: "outcome",
 		Name: "signup", Dimension: map[string]any{"plan": "pro"},
 		Current: 50, BaselineMean: 10, DeviationSigma: 5.0,
 		Summary: "test summary", FirstDetected: "2026-04-10T12:00:00Z",
 	})
-	if card.BadgeClass != "spike" {
-		t.Errorf("badge = %q, want spike", card.BadgeClass)
+	if row.KindLabel != "DIMENSION SPIKE" {
+		t.Errorf("kind label = %q, want DIMENSION SPIKE", row.KindLabel)
 	}
-	if card.Dimension != "plan=pro" {
-		t.Errorf("dimension = %q", card.Dimension)
+	if row.Pillar != "outcomes" {
+		t.Errorf("pillar = %q, want outcomes", row.Pillar)
 	}
-	if card.Sigma != "5.0σ" {
-		t.Errorf("sigma = %q", card.Sigma)
+	if row.SevTier != "medium" {
+		t.Errorf("sev tier = %q, want medium", row.SevTier)
+	}
+	if row.Dimension != "plan=pro" {
+		t.Errorf("dimension = %q", row.Dimension)
+	}
+	if row.Sigma != "5.0σ" {
+		t.Errorf("sigma = %q", row.Sigma)
+	}
+	if row.Multiplier != "5×" {
+		t.Errorf("multiplier = %q, want 5×", row.Multiplier)
 	}
 
-	card2 := toAnomalyCard(reads.AnomalyEntry{
+	row2 := toAnomalyRow(reads.AnomalyEntry{
 		AnomalyKind: "volume_shift", MetricKind: "perf", Name: "GET /x",
 	})
-	if card2.BadgeClass != "shift" {
-		t.Errorf("badge = %q, want shift", card2.BadgeClass)
+	if row2.KindLabel != "VOLUME SHIFT" {
+		t.Errorf("kind label = %q, want VOLUME SHIFT", row2.KindLabel)
+	}
+	if row2.Pillar != "performance" {
+		t.Errorf("pillar = %q, want performance", row2.Pillar)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// filterAnomalies
+// ---------------------------------------------------------------------------
+
+func TestFilterAnomalies(t *testing.T) {
+	rows := []anomalyRowData{
+		{Name: "a", SevTier: "high", Pillar: "outcomes"},
+		{Name: "b", SevTier: "medium", Pillar: "performance"},
+		{Name: "c", SevTier: "low", Pillar: "errors"},
+		{Name: "d", SevTier: "high", Pillar: "performance"},
+	}
+
+	cases := []struct {
+		filter string
+		want   int
+	}{
+		{"", 4},
+		{"all", 4},
+		{"severe", 2},
+		{"strong", 1},
+		{"mild", 1},
+		{"outcomes", 1},
+		{"performance", 2},
+		{"errors", 1},
+		{"bogus", 4},
+	}
+	for _, tc := range cases {
+		got := filterAnomalies(rows, tc.filter)
+		if len(got) != tc.want {
+			t.Errorf("filter(%q) = %d rows, want %d", tc.filter, len(got), tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sevTier
+// ---------------------------------------------------------------------------
+
+func TestSevTier(t *testing.T) {
+	cases := []struct {
+		sigma float64
+		want  string
+	}{
+		{15.0, "high"},
+		{10.0, "high"},
+		{9.9, "medium"},
+		{5.0, "medium"},
+		{4.9, "low"},
+		{0.0, "low"},
+	}
+	for _, tc := range cases {
+		if got := sevTier(tc.sigma); got != tc.want {
+			t.Errorf("sevTier(%.1f) = %q, want %q", tc.sigma, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// kindLabel
+// ---------------------------------------------------------------------------
+
+func TestKindLabel(t *testing.T) {
+	cases := []struct {
+		kind, want string
+	}{
+		{"volume_shift", "VOLUME SHIFT"},
+		{"dimension_spike", "DIMENSION SPIKE"},
+		{"perf_drift", "PERF DRIFT"},
+		{"error_rate_spike", "ERROR SPIKE"},
+		{"outcome_drop", "OUTCOME DROP"},
+		{"unknown_thing", "UNKNOWN THING"},
+	}
+	for _, tc := range cases {
+		if got := kindLabel(tc.kind); got != tc.want {
+			t.Errorf("kindLabel(%q) = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fmtCount
+// ---------------------------------------------------------------------------
+
+func TestFmtCount(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1.0k"},
+		{1500, "1.5k"},
+		{9999, "10.0k"},
+		{10000, "10k"},
+		{15432, "15k"},
+	}
+	for _, tc := range cases {
+		if got := fmtCount(tc.n); got != tc.want {
+			t.Errorf("fmtCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// computeAnomalyStats
+// ---------------------------------------------------------------------------
+
+func TestComputeAnomalyStats(t *testing.T) {
+	rows := []anomalyRowData{
+		{SevTier: "high", Pillar: "outcomes", SigmaRaw: 15.0, MultiplierRaw: 10},
+		{SevTier: "medium", Pillar: "performance", SigmaRaw: 7.0, MultiplierRaw: 3, Name: "slow"},
+		{SevTier: "low", Pillar: "errors", SigmaRaw: 2.0, MultiplierRaw: 1},
+		{SevTier: "high", Pillar: "errors", SigmaRaw: 20.0, MultiplierRaw: 15, Name: "worst"},
+	}
+	s := computeAnomalyStats(rows)
+	if s.Total != 4 {
+		t.Errorf("total = %d", s.Total)
+	}
+	if s.High != 2 {
+		t.Errorf("high = %d", s.High)
+	}
+	if s.Medium != 1 {
+		t.Errorf("medium = %d", s.Medium)
+	}
+	if s.Low != 1 {
+		t.Errorf("low = %d", s.Low)
+	}
+	if s.Outcomes != 1 || s.Performance != 1 || s.Errors != 2 {
+		t.Errorf("pillars = %d/%d/%d", s.Outcomes, s.Performance, s.Errors)
+	}
+	if s.WorstSigma != "20.0σ" {
+		t.Errorf("worst sigma = %q", s.WorstSigma)
+	}
+	if s.WorstName != "worst" {
+		t.Errorf("worst name = %q", s.WorstName)
+	}
+	if s.TopMult != 15 {
+		t.Errorf("top mult = %d", s.TopMult)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// anomalies filter via HTTP
+// ---------------------------------------------------------------------------
+
+func TestAnomaliesPage_filterChips(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindOutcome, Name: "checkout.completed",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 50, Sum: fp(12.0), P50: fp(10), P95: fp(1),
+			Fingerprint: "dimension_spike"},
+		{Kind: beacondb.KindPerf, Name: "GET /slow-endpoint",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 30, Sum: fp(3.0), P50: fp(5), P95: fp(0.5),
+			Fingerprint: "volume_shift"},
+	})
+
+	// Filter by severity (severe = high = σ ≥ 10) — htmx partial
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies?filter=severe&list=1", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "checkout.completed") {
+		t.Error("severe filter should include σ=12 anomaly")
+	}
+	if strings.Contains(body, "slow-endpoint") {
+		t.Error("severe filter should exclude σ=3 anomaly")
+	}
+
+	// Filter by pillar — htmx partial
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/anomalies?filter=performance&list=1", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if !strings.Contains(body, "slow-endpoint") {
+		t.Error("performance filter should include perf anomaly")
+	}
+	if strings.Contains(body, "checkout.completed") {
+		t.Error("performance filter should exclude outcome anomaly")
 	}
 }
 
