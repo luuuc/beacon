@@ -797,6 +797,157 @@ func TestAnomalySummary_zeroMeanFallback(t *testing.T) {
 	}
 }
 
+func TestGetAnomalies_perfDriftFieldMapping(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	// perf_drift stores: P50=baseline mean, P95=current p95, P99=baseline stddev.
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /search",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 20, Sum: fp(5.0), P50: fp(50), P95: fp(200), P99: fp(30),
+		Fingerprint: "perf_drift",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Anomalies) != 1 {
+		t.Fatalf("anomalies = %d, want 1", len(resp.Anomalies))
+	}
+	a := resp.Anomalies[0]
+	if a.AnomalyKind != "perf_drift" {
+		t.Errorf("kind = %q, want perf_drift", a.AnomalyKind)
+	}
+	if a.CurrentP95 != 200 {
+		t.Errorf("current_p95 = %v, want 200", a.CurrentP95)
+	}
+	if a.BaselineMean != 50 {
+		t.Errorf("baseline_mean = %v, want 50", a.BaselineMean)
+	}
+	if a.BaselineStddev != 30 {
+		t.Errorf("baseline_stddev = %v, want 30", a.BaselineStddev)
+	}
+}
+
+func TestAnomalySummary_perfDrift(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindPerf, Name: "GET /search",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 20, Sum: fp(5.0), P50: fp(50), P95: fp(200), P99: fp(30),
+		Fingerprint: "perf_drift",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "p95 latency regressed") {
+		t.Errorf("summary missing 'p95 latency regressed': %q", s)
+	}
+	if !strings.Contains(s, "200ms") {
+		t.Errorf("summary missing current p95: %q", s)
+	}
+	if !strings.Contains(s, "baseline ~50ms") {
+		t.Errorf("summary missing baseline: %q", s)
+	}
+}
+
+func TestAnomalySummary_errorRateSpike(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "NoMethodError",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 100, Sum: fp(9.0), P50: fp(10), P95: fp(1),
+		Fingerprint: "error_rate_spike",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "errors spiked") {
+		t.Errorf("summary missing 'errors spiked': %q", s)
+	}
+	if !strings.Contains(s, "100 vs ~10/day") {
+		t.Errorf("summary missing current vs baseline: %q", s)
+	}
+}
+
+func TestAnomalySummary_errorRateSpikeZeroMean(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindError, Name: "NewError",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 50, Sum: fp(5.0), P50: fp(0), P95: fp(0),
+		Fingerprint: "error_rate_spike",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "50 errors") {
+		t.Errorf("summary missing error count: %q", s)
+	}
+	if !strings.Contains(s, "no prior baseline") {
+		t.Errorf("summary missing zero-mean fallback: %q", s)
+	}
+}
+
+func TestAnomalySummary_outcomeDrop(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindOutcome, Name: "signup.completed",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 10, Sum: fp(9.0), P50: fp(100), P95: fp(10),
+		Fingerprint: "outcome_drop",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "dropped to 10") {
+		t.Errorf("summary missing 'dropped to': %q", s)
+	}
+	if !strings.Contains(s, "normally ~100/day") {
+		t.Errorf("summary missing baseline: %q", s)
+	}
+	if !strings.Contains(s, "below baseline") {
+		t.Errorf("summary missing 'below baseline': %q", s)
+	}
+}
+
+func TestAnomalySummary_outcomeDropZeroMean(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindOutcome, Name: "purchase.completed",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 5, Sum: fp(4.0), P50: fp(0), P95: fp(0),
+		Fingerprint: "outcome_drop",
+	})
+
+	resp, err := h.GetAnomalies(context.Background(), GetAnomaliesRequest{Since: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := resp.Anomalies[0].Summary
+	if !strings.Contains(s, "dropped to 5 events") {
+		t.Errorf("summary missing zero-mean fallback: %q", s)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GetErrorDetail
 // ---------------------------------------------------------------------------

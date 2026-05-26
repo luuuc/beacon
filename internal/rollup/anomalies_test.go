@@ -392,6 +392,262 @@ func TestAnomaly_default3SigmaThreshold(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Conformance fixture: perf_drift (p95 latency regression)
+// ---------------------------------------------------------------------------
+
+func TestAnomaly_perfDrift(t *testing.T) {
+	// Baseline: 13 days of perf data with p95 ~50ms.
+	// Detection window: p95 jumps to 200ms.
+	now := time.Date(2026, 4, 14, 4, 0, 0, 0, time.UTC)
+	w, fake := newAnomalyWorker(t, now, AnomalyConfig{
+		BaselineWindow:  14 * 24 * time.Hour,
+		DetectionWindow: 24 * time.Hour,
+		SigmaThreshold:  2.0,
+		MinVolume:       5,
+	})
+
+	baseTime := now.Add(-14 * 24 * time.Hour).Truncate(time.Hour)
+	var metrics []beacondb.Metric
+
+	for d := 0; d < 13; d++ {
+		m := makeHourlyRow(beacondb.KindPerf, "GET /search", d, 20, baseTime, nil)
+		p95 := 50.0
+		m.P95 = &p95
+		metrics = append(metrics, m)
+	}
+	// Detection window: same count but p95 spikes.
+	m := makeHourlyRow(beacondb.KindPerf, "GET /search", 13, 20, baseTime, nil)
+	p95 := 200.0
+	m.P95 = &p95
+	metrics = append(metrics, m)
+
+	seedHourlyMetrics(t, fake, metrics...)
+
+	if err := w.detectAnomalies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	anomalies, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		PeriodKind: beacondb.PeriodAnomaly,
+	})
+
+	var perfDrift *beacondb.Metric
+	for i, a := range anomalies {
+		if a.Fingerprint == AnomalyPerfDrift {
+			perfDrift = &anomalies[i]
+			break
+		}
+	}
+	if perfDrift == nil {
+		t.Fatalf("expected perf_drift anomaly, got %d anomalies: %v", len(anomalies), fingerprints(anomalies))
+	}
+	if perfDrift.Kind != beacondb.KindPerf {
+		t.Errorf("kind = %q, want perf", perfDrift.Kind)
+	}
+	if perfDrift.P95 == nil || *perfDrift.P95 != 200.0 {
+		t.Errorf("P95 (current p95) = %v, want 200", perfDrift.P95)
+	}
+	if perfDrift.Sum == nil || *perfDrift.Sum < 2.0 {
+		t.Errorf("Sum (deviation sigma) = %v, want >= 2.0", perfDrift.Sum)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Conformance fixture: error_rate_spike
+// ---------------------------------------------------------------------------
+
+func TestAnomaly_errorRateSpike(t *testing.T) {
+	// Baseline: 13 days of ~10 errors/day.
+	// Detection window: spike to 100 errors.
+	now := time.Date(2026, 4, 14, 4, 0, 0, 0, time.UTC)
+	w, fake := newAnomalyWorker(t, now, AnomalyConfig{
+		BaselineWindow:  14 * 24 * time.Hour,
+		DetectionWindow: 24 * time.Hour,
+		SigmaThreshold:  2.0,
+		MinVolume:       5,
+	})
+
+	baseTime := now.Add(-14 * 24 * time.Hour).Truncate(time.Hour)
+	var metrics []beacondb.Metric
+
+	for d := 0; d < 13; d++ {
+		metrics = append(metrics, makeHourlyRow(beacondb.KindError, "NoMethodError", d, 10, baseTime, nil))
+	}
+	metrics = append(metrics, makeHourlyRow(beacondb.KindError, "NoMethodError", 13, 100, baseTime, nil))
+
+	seedHourlyMetrics(t, fake, metrics...)
+
+	if err := w.detectAnomalies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	anomalies, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		PeriodKind: beacondb.PeriodAnomaly,
+	})
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %d, want 1", len(anomalies))
+	}
+	a := anomalies[0]
+	if a.Fingerprint != AnomalyErrorRateSpike {
+		t.Errorf("fingerprint = %q, want %q", a.Fingerprint, AnomalyErrorRateSpike)
+	}
+	if a.Kind != beacondb.KindError {
+		t.Errorf("kind = %q, want error", a.Kind)
+	}
+	if a.Count != 100 {
+		t.Errorf("count = %d, want 100", a.Count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Conformance fixture: outcome_drop
+// ---------------------------------------------------------------------------
+
+func TestAnomaly_outcomeDrop(t *testing.T) {
+	// Baseline: 13 days of ~100 conversions/day.
+	// Detection window: drops to 10 conversions.
+	now := time.Date(2026, 4, 14, 4, 0, 0, 0, time.UTC)
+	w, fake := newAnomalyWorker(t, now, AnomalyConfig{
+		BaselineWindow:  14 * 24 * time.Hour,
+		DetectionWindow: 24 * time.Hour,
+		SigmaThreshold:  2.0,
+		MinVolume:       5,
+	})
+
+	baseTime := now.Add(-14 * 24 * time.Hour).Truncate(time.Hour)
+	var metrics []beacondb.Metric
+
+	for d := 0; d < 13; d++ {
+		metrics = append(metrics, makeHourlyRow(beacondb.KindOutcome, "signup.completed", d, 100, baseTime, nil))
+	}
+	// Significant drop in detection window.
+	metrics = append(metrics, makeHourlyRow(beacondb.KindOutcome, "signup.completed", 13, 10, baseTime, nil))
+
+	seedHourlyMetrics(t, fake, metrics...)
+
+	if err := w.detectAnomalies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	anomalies, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		PeriodKind: beacondb.PeriodAnomaly,
+	})
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %d, want 1", len(anomalies))
+	}
+	a := anomalies[0]
+	if a.Fingerprint != AnomalyOutcomeDrop {
+		t.Errorf("fingerprint = %q, want %q", a.Fingerprint, AnomalyOutcomeDrop)
+	}
+	if a.Kind != beacondb.KindOutcome {
+		t.Errorf("kind = %q, want outcome", a.Kind)
+	}
+	if a.Count != 10 {
+		t.Errorf("count = %d, want 10", a.Count)
+	}
+	if a.Sum == nil || *a.Sum < 2.0 {
+		t.Errorf("sum (deviation sigma) = %v, want >= 2.0", a.Sum)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Conformance fixture: downward deviation on non-outcome is still suppressed
+// ---------------------------------------------------------------------------
+
+func TestAnomaly_nonOutcomeDropSuppressed(t *testing.T) {
+	// Ambient traffic drops should NOT fire outcome_drop.
+	now := time.Date(2026, 4, 14, 4, 0, 0, 0, time.UTC)
+	w, fake := newAnomalyWorker(t, now, AnomalyConfig{
+		BaselineWindow:  14 * 24 * time.Hour,
+		DetectionWindow: 24 * time.Hour,
+		SigmaThreshold:  2.0,
+		MinVolume:       5,
+	})
+
+	baseTime := now.Add(-14 * 24 * time.Hour).Truncate(time.Hour)
+	var metrics []beacondb.Metric
+	for d := 0; d < 13; d++ {
+		metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "http_request", d, 100, baseTime, nil))
+	}
+	metrics = append(metrics, makeHourlyRow(beacondb.KindAmbient, "http_request", 13, 5, baseTime, nil))
+
+	seedHourlyMetrics(t, fake, metrics...)
+
+	if err := w.detectAnomalies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	anomalies, _ := fake.ListMetrics(context.Background(), beacondb.MetricFilter{
+		PeriodKind: beacondb.PeriodAnomaly,
+	})
+	if len(anomalies) != 0 {
+		t.Errorf("anomalies = %d, want 0 (non-outcome drop still suppressed)", len(anomalies))
+	}
+}
+
+func fingerprints(ms []beacondb.Metric) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.Fingerprint
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// meanStddevFloat unit tests
+// ---------------------------------------------------------------------------
+
+func TestMeanStddevFloat(t *testing.T) {
+	cases := []struct {
+		name       string
+		vals       []float64
+		wantMean   float64
+		wantStddev float64
+	}{
+		{"empty", nil, 0, 0},
+		{"single", []float64{50}, 50, 0},
+		{"uniform", []float64{10, 10, 10}, 10, 0},
+		{"simple", []float64{10, 20}, 15, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mean, stddev := meanStddevFloat(tc.vals)
+			if mean != tc.wantMean {
+				t.Errorf("mean = %v, want %v", mean, tc.wantMean)
+			}
+			if diff := stddev - tc.wantStddev; diff > 0.001 || diff < -0.001 {
+				t.Errorf("stddev = %v, want %v", stddev, tc.wantStddev)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// maxFloat unit tests
+// ---------------------------------------------------------------------------
+
+func TestMaxFloat(t *testing.T) {
+	cases := []struct {
+		name string
+		vals []float64
+		want float64
+	}{
+		{"empty", nil, 0},
+		{"single", []float64{42}, 42},
+		{"multiple", []float64{10, 50, 30}, 50},
+		{"negative", []float64{-5, -1, -10}, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := maxFloat(tc.vals)
+			if got != tc.want {
+				t.Errorf("maxFloat = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // meanStddev unit tests
 // ---------------------------------------------------------------------------
 

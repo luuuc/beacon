@@ -738,6 +738,87 @@ func TestAnomaliesPage_htmxPartial(t *testing.T) {
 	}
 }
 
+func TestAnomaliesPage_perfDriftBadge(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindPerf, Name: "GET /search",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 20, Sum: fp(5.0), P50: fp(50), P95: fp(200), P99: fp(30),
+			Fingerprint: "perf_drift", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "badge-drift") {
+		t.Error("missing badge-drift class")
+	}
+	if !strings.Contains(body, "perf_drift") {
+		t.Error("missing perf_drift badge text")
+	}
+	if !strings.Contains(body, "p95") {
+		t.Error("missing p95 latency display")
+	}
+}
+
+func TestAnomaliesPage_errorRateSpikeBadge(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindError, Name: "NoMethodError",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 100, Sum: fp(9.0), P50: fp(10), P95: fp(1),
+			Fingerprint: "error_rate_spike", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "badge-error") {
+		t.Error("missing badge-error class")
+	}
+	if !strings.Contains(body, "error_rate_spike") {
+		t.Error("missing error_rate_spike badge text")
+	}
+}
+
+func TestAnomaliesPage_outcomeDropBadge(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{
+		{Kind: beacondb.KindOutcome, Name: "signup.completed",
+			PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+			PeriodStart: fixedNow.Add(-1 * time.Hour),
+			Count: 10, Sum: fp(9.0), P50: fp(100), P95: fp(10),
+			Fingerprint: "outcome_drop", DimensionHash: ""},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anomalies", nil)
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "badge-drop") {
+		t.Error("missing badge-drop class")
+	}
+	if !strings.Contains(body, "outcome_drop") {
+		t.Error("missing outcome_drop badge text")
+	}
+}
+
 func TestLandingAnomalyCard_withAnomaly(t *testing.T) {
 	_, fake, mux := newTestDashboardWithFake(t, "")
 	ctx := context.Background()
