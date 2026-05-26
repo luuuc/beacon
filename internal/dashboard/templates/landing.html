@@ -1,24 +1,228 @@
 {{define "content"}}
-<h1>Dashboard</h1>
-<p class="subtitle">Is anything weird right now?</p>
-<div class="landing-cards">
-  {{if .Cards}}
-    {{range .Cards}}
-    <a href="{{.Link}}" class="card landing-card">
-      <div class="card-label">{{.Label}}</div>
-      <div class="card-headline">{{.Headline}}</div>
-      {{if .Sparkline}}
-      <div class="card-sparkline">{{.Sparkline}}</div>
-      {{end}}
-      <div class="card-detail">{{.Detail}}</div>
-      <div class="card-action">View all →</div>
-    </a>
-    {{end}}
-  {{else}}
-    <div class="empty-state">
-      <p>No data yet. Start sending events to see your dashboard.</p>
+<div class="dash-root">
+{{if .HasDeploys}}
+  {{with .Latest}}
+  {{/* ── Deploy hero ────────────────────────────────────────── */}}
+  <section class="dash-hero">
+    <div class="dash-hero-row">
+      <div style="flex:1 1 auto;min-width:0">
+        <div class="dash-hero-eyebrow">
+          <span class="dot"></span>
+          Latest deploy
+        </div>
+        <h1 class="dash-hero-title">
+          <span class="dash-hero-ver mono">{{.SHA}}</span>
+          <span class="dash-hero-verdict" data-tone="{{.Verdict.Tone}}">
+            <span class="dash-hero-verdict-dot"></span>
+            {{.Verdict.Label}} — {{.Verdict.Note}}
+          </span>
+        </h1>
+        <div class="dash-hero-meta">
+          <span>Deployed <b>{{.When}}</b></span>
+          <span class="mono">{{.WhenFull}}</span>
+        </div>
+      </div>
+      <div class="dash-header-right">
+        <span class="dash-pulse" aria-hidden="true"></span>
+        <span>live</span>
+      </div>
     </div>
+
+    <div class="dash-hero-stats">
+      <div class="dash-hero-stat">
+        <div class="dash-hero-stat-num" data-tone="{{if .Regressions}}high{{else}}ok{{end}}">{{len .Regressions}}</div>
+        <div class="dash-hero-stat-label">Regressions since deploy</div>
+      </div>
+      <div class="dash-hero-stat">
+        <div class="dash-hero-stat-num" data-tone="ok">{{len .Improvements}}</div>
+        <div class="dash-hero-stat-label">Improvements</div>
+      </div>
+      <div class="dash-hero-stat">
+        <div class="dash-hero-stat-num" data-tone="{{if .NewErrCount}}high{{else}}muted{{end}}">{{.NewErrCount}}</div>
+        <div class="dash-hero-stat-label">New error fingerprints</div>
+      </div>
+      <div class="dash-hero-stat">
+        <div class="dash-hero-stat-num" data-tone="muted">{{.Unchanged}}</div>
+        <div class="dash-hero-stat-label">Dimensions unchanged</div>
+      </div>
+    </div>
+  </section>
+
+  {{/* ── Since this deploy ──────────────────────────────────── */}}
+  <section class="dash-section">
+    <div class="dash-section-head">
+      <span class="dash-section-title">Since this deploy</span>
+      <a href="/anomalies" class="dash-section-link">View all signals →</a>
+    </div>
+    <div class="dash-timeline">
+      <div class="dash-deploy-block" data-tone="{{.Verdict.Tone}}">
+        <div class="dash-deploy-when">
+          <div class="ver mono">{{.SHA}}</div>
+          <div class="when">{{.When}}</div>
+        </div>
+        <div class="dash-deploy-card">
+          <div class="dash-deploy-card-head">
+            <div class="dash-deploy-card-title">
+              <span class="dash-hero-verdict" data-tone="{{.Verdict.Tone}}" style="padding:2px 8px;font-size:11.5px;margin-right:8px">
+                <span class="dash-hero-verdict-dot"></span>
+                {{.Verdict.Label}}
+              </span>
+              {{.Verdict.Note}}
+            </div>
+          </div>
+
+          {{if .Regressions}}
+          <div class="dash-deploy-group">
+            <div class="dash-deploy-group-head" data-tone="high">
+              <span class="swatch"></span>
+              Regressions <span class="count">{{len .Regressions}}</span>
+            </div>
+            <ul class="dash-deploy-items">
+              {{range .Regressions}}
+              <li>
+                <span class="dash-pillar dash-pillar-{{.Pillar}}">{{.Pillar}}</span>
+                <span class="who">{{.Name}}</span>
+                <span class="why" data-tone="{{.Tone}}">
+                  {{.Why}} <span class="delta">{{.Delta}}</span>
+                </span>
+              </li>
+              {{end}}
+            </ul>
+          </div>
+          {{end}}
+
+          {{if .Improvements}}
+          <div class="dash-deploy-group">
+            <div class="dash-deploy-group-head" data-tone="ok">
+              <span class="swatch"></span>
+              Improvements <span class="count">{{len .Improvements}}</span>
+            </div>
+            <ul class="dash-deploy-items">
+              {{range .Improvements}}
+              <li>
+                <span class="dash-pillar dash-pillar-{{.Pillar}}">{{.Pillar}}</span>
+                <span class="who">{{.Name}}</span>
+                <span class="why" data-tone="{{.Tone}}">
+                  {{.Why}} <span class="delta">{{.Delta}}</span>
+                </span>
+              </li>
+              {{end}}
+            </ul>
+          </div>
+          {{end}}
+
+          {{if and (not .Regressions) (not .Improvements)}}
+          <div class="dash-deploy-empty">No deviations detected since this deploy.</div>
+          {{end}}
+
+          <div class="dash-deploy-foot">
+            <span>{{.Unchanged}} dimensions unchanged · {{.WhenFull}}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  {{end}}{{/* end with .Latest */}}
+
+  {{/* ── Deploy history ─────────────────────────────────────── */}}
+  {{if .History}}
+  <section class="dash-section">
+    <div class="dash-section-head">
+      <span class="dash-section-title">Deploy history</span>
+    </div>
+    <div class="dash-timeline">
+      {{range .History}}
+      <div class="dash-deploy-block" data-tone="{{.Verdict.Tone}}">
+        <div class="dash-deploy-when">
+          <div class="ver mono">{{.SHA}}</div>
+          <div class="when">{{.When}}</div>
+        </div>
+        <div class="dash-deploy-card">
+          <div class="dash-deploy-card-head">
+            <div class="dash-deploy-card-title">
+              <span class="dash-hero-verdict" data-tone="{{.Verdict.Tone}}" style="padding:2px 8px;font-size:11.5px;margin-right:8px">
+                <span class="dash-hero-verdict-dot"></span>
+                {{.Verdict.Label}}
+              </span>
+              {{.Verdict.Note}}
+            </div>
+          </div>
+
+          {{if .Regressions}}
+          <div class="dash-deploy-group">
+            <div class="dash-deploy-group-head" data-tone="{{if .Regressions}}med{{else}}ok{{end}}">
+              <span class="swatch"></span>
+              Regressions <span class="count">{{len .Regressions}}</span>
+            </div>
+            <ul class="dash-deploy-items">
+              {{range .Regressions}}
+              <li>
+                <span class="dash-pillar dash-pillar-{{.Pillar}}">{{.Pillar}}</span>
+                <span class="who">{{.Name}}</span>
+                <span class="why" data-tone="{{.Tone}}">
+                  {{.Why}} <span class="delta">{{.Delta}}</span>
+                </span>
+              </li>
+              {{end}}
+            </ul>
+          </div>
+          {{end}}
+
+          {{if and (not .Regressions) (not .Improvements)}}
+          <div class="dash-deploy-empty">No deviations detected since this deploy.</div>
+          {{end}}
+
+          <div class="dash-deploy-foot">
+            <span>{{.Unchanged}} dimensions unchanged · {{.WhenFull}}</span>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </section>
   {{end}}
+
+{{else}}
+  {{/* ── No deploys fallback ────────────────────────────────── */}}
+  <section class="dash-hero">
+    <div class="dash-hero-row">
+      <div>
+        <div class="dash-hero-eyebrow">Dashboard</div>
+        <h1 class="dash-hero-title">
+          <span class="dash-hero-ver">Beacon</span>
+        </h1>
+        <div class="dash-hero-meta">
+          <span>No deploys tracked yet. Send a <b>deploy.shipped</b> event to see your deploy timeline.</span>
+        </div>
+      </div>
+      <div class="dash-header-right">
+        <span class="dash-pulse" aria-hidden="true"></span>
+        <span>live</span>
+      </div>
+    </div>
+  </section>
+{{end}}
+
+  {{/* ── Pillar status strip ──────────────────────────────── */}}
+  <section class="dash-section">
+    <div class="dash-section-head">
+      <span class="dash-section-title">Pillar status</span>
+    </div>
+    <ul class="dash-pillars">
+      {{range .Pillars}}
+      <li>
+        <a href="{{.Link}}" class="dash-pillar-row">
+          <span class="dash-pillar-icon" data-tone="{{.Tone}}"></span>
+          <span class="dash-pillar-name">{{.Name}}</span>
+          <span class="dash-pillar-status" data-tone="{{.Tone}}">
+            {{.Status}}{{if .Detail}}<span class="mono"> — {{.Detail}}</span>{{end}}
+          </span>
+          <span class="dash-pillar-end">→</span>
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </section>
 </div>
 {{end}}
 {{define "landing.html"}}{{template "layout.html" .}}{{end}}

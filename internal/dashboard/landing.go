@@ -1,9 +1,7 @@
 package dashboard
 
 import (
-	"context"
 	"fmt"
-	"html/template"
 	"math"
 	"net/http"
 	"time"
@@ -11,124 +9,325 @@ import (
 	"github.com/luuuc/beacon/internal/reads"
 )
 
-// landingCard is the template data for one of the three headline cards.
-type landingCard struct {
-	Label     string
-	Headline  string
-	Sparkline template.HTML
-	Detail    string
-	Link      string
+type deploySignal struct {
+	Pillar string // "outcomes", "performance", "errors"
+	Name   string
+	Why    string
+	Delta  string
+	Tone   string // "high", "med", "ok"
+}
+
+type verdictData struct {
+	Label string
+	Tone  string
+	Note  string
+}
+
+type deployBlockData struct {
+	SHA           string
+	When          string
+	WhenFull      string
+	Regressions   []deploySignal
+	Improvements  []deploySignal
+	Unchanged     int
+	NewErrCount   int
+	Verdict       verdictData
+}
+
+type pillarStatusRow struct {
+	Name   string
+	Tone   string
+	Status string
+	Detail string
+	Link   string
 }
 
 func (d *Dashboard) handleLanding(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var cards []landingCard
+	now := d.reads.Now().UTC()
 
-	if card := d.outcomesHeadline(ctx); card != nil {
-		cards = append(cards, *card)
+	deploys, _ := d.reads.GetDeployEvents(ctx, now.Add(-30*24*time.Hour), now)
+	outcomes, _ := d.reads.GetOutcomeSummaries(ctx, 0)
+	perfResp, _ := d.reads.GetPerfEndpoints(ctx, reads.GetPerfRequest{})
+	newErrResp, _ := d.reads.GetErrors(ctx, reads.GetErrorsRequest{NewOnly: true})
+	allErrResp, _ := d.reads.GetErrors(ctx, reads.GetErrorsRequest{})
+	anomResp, _ := d.reads.GetAnomalies(ctx, reads.GetAnomaliesRequest{Since: 24 * time.Hour})
+
+	var perfs []reads.PerfEndpoint
+	if perfResp != nil {
+		perfs = perfResp.Endpoints
 	}
-	if card := d.perfHeadline(ctx); card != nil {
-		cards = append(cards, *card)
+	var newErrors []reads.ErrorSummary
+	if newErrResp != nil {
+		newErrors = newErrResp.Errors
 	}
-	if card := d.errorsHeadline(ctx); card != nil {
-		cards = append(cards, *card)
+	var allErrors []reads.ErrorSummary
+	if allErrResp != nil {
+		allErrors = allErrResp.Errors
 	}
-	if card := d.anomaliesHeadline(ctx); card != nil {
-		cards = append(cards, *card)
+	var anomalies []reads.AnomalyEntry
+	if anomResp != nil {
+		anomalies = anomResp.Anomalies
 	}
+
+	totalDims := len(outcomes) + len(perfs) + len(allErrors)
+
+	var regressions, improvements []deploySignal
+
+	for _, ep := range perfs {
+		if ep.DriftSigmas > 2.0 {
+			regressions = append(regressions, deploySignal{
+				Pillar: "performance",
+				Name:   ep.Name,
+				Why:    fmt.Sprintf("P95 %.0fms", ep.CurrentP95),
+				Delta:  fmt.Sprintf("+%.1fσ", ep.DriftSigmas),
+				Tone:   sigmaTone(ep.DriftSigmas),
+			})
+		} else if ep.DriftSigmas < -2.0 {
+			improvements = append(improvements, deploySignal{
+				Pillar: "performance",
+				Name:   ep.Name,
+				Why:    "back to baseline",
+				Delta:  fmt.Sprintf("%.0f → %.0fms", ep.BaselineP95, ep.CurrentP95),
+				Tone:   "ok",
+			})
+		}
+	}
+
+	for _, o := range outcomes {
+		if o.Sigma < -2.0 {
+			regressions = append(regressions, deploySignal{
+				Pillar: "outcomes",
+				Name:   o.Name,
+				Why:    fmt.Sprintf("%d/day vs ~%.1f/day", o.DailyCount, o.BaselineMean),
+				Delta:  fmt.Sprintf("%.0f%%", o.DriftPercent),
+				Tone:   sigmaTone(math.Abs(o.Sigma)),
+			})
+		}
+	}
+
+	for _, e := range newErrors {
+		regressions = append(regressions, deploySignal{
+			Pillar: "errors",
+			Name:   e.Name,
+			Why:    "new fingerprint",
+			Delta:  fmt.Sprintf("%d occ", e.Occurrences),
+			Tone:   "high",
+		})
+	}
+
+	unchanged := totalDims - len(regressions) - len(improvements)
+	if unchanged < 0 {
+		unchanged = 0
+	}
+
+	// Reverse deploys so most recent is first (they arrive ascending).
+	for i, j := 0, len(deploys)-1; i < j; i, j = i+1, j-1 {
+		deploys[i], deploys[j] = deploys[j], deploys[i]
+	}
+
+	var latest *deployBlockData
+	var history []deployBlockData
+
+	if len(deploys) > 0 {
+		errCount := 0
+		for _, r := range regressions {
+			if r.Pillar == "errors" {
+				errCount++
+			}
+		}
+		latest = &deployBlockData{
+			SHA:          shortSHA(deploys[0].SHA),
+			When:         relativeTime(deploys[0].CreatedAt, now),
+			WhenFull:     deploys[0].CreatedAt.Format("2006-01-02 15:04 UTC"),
+			Regressions:  regressions,
+			Improvements: improvements,
+			Unchanged:    unchanged,
+			NewErrCount:  errCount,
+		}
+		latest.Verdict = computeVerdict(latest.Regressions)
+
+		limit := 4
+		if len(deploys) < limit {
+			limit = len(deploys)
+		}
+		for _, dep := range deploys[1:limit] {
+			var histReg []deploySignal
+			for _, e := range allErrors {
+				if e.IntroducedDeploySHA == dep.SHA {
+					histReg = append(histReg, deploySignal{
+						Pillar: "errors",
+						Name:   e.Name,
+						Why:    "introduced in this deploy",
+						Delta:  fmt.Sprintf("%d occ", e.Occurrences),
+						Tone:   "med",
+					})
+				}
+			}
+			block := deployBlockData{
+				SHA:         shortSHA(dep.SHA),
+				When:        relativeTime(dep.CreatedAt, now),
+				WhenFull:    dep.CreatedAt.Format("2006-01-02 15:04 UTC"),
+				Regressions: histReg,
+				Unchanged:   totalDims - len(histReg),
+			}
+			block.Verdict = computeVerdict(block.Regressions)
+			history = append(history, block)
+		}
+	}
+
+	pillars := buildPillarStatus(outcomes, perfs, newErrors, anomalies)
 
 	d.render(w, r, "landing.html", "", pageData(map[string]any{
-		"ActiveNav": "dashboard",
-		"Title":     "",
-		"Cards":     cards,
+		"ActiveNav":  "dashboard",
+		"Title":      "",
+		"HasDeploys": len(deploys) > 0,
+		"Latest":     latest,
+		"History":    history,
+		"Pillars":    pillars,
+		"TotalDims":  totalDims,
 	}))
 }
 
-func (d *Dashboard) outcomesHeadline(ctx context.Context) *landingCard {
-	outcomes, err := d.reads.GetOutcomeSummaries(ctx, 0)
-	if err != nil || len(outcomes) == 0 {
-		return nil
-	}
-	top := outcomes[0] // sorted by absolute drift
-	drift := formatDrift(top.DriftPercent)
-	return &landingCard{
-		Label:     "Outcomes",
-		Headline:  top.Name,
-		Sparkline: SparklineSVG(top.HourlyCounts, 200, 40),
-		Detail:    fmt.Sprintf("%d events (7d) — %s vs baseline", top.DailyCount, drift),
-		Link:      "/outcomes",
-	}
-}
-
-func (d *Dashboard) perfHeadline(ctx context.Context) *landingCard {
-	resp, err := d.reads.GetPerfEndpoints(ctx, reads.GetPerfRequest{})
-	if err != nil || len(resp.Endpoints) == 0 {
-		return nil
-	}
-	top := resp.Endpoints[0] // sorted by absolute drift
-	return &landingCard{
-		Label:     "Performance",
-		Headline:  top.Name,
-		Sparkline: template.HTML(""), // no hourly series in PerfEndpoint — sparkline comes in card 7
-		Detail:    fmt.Sprintf("P95 %.0fms (baseline %.0fms) — %.1fσ drift", top.CurrentP95, top.BaselineP95, top.DriftSigmas),
-		Link:      "/performance",
-	}
-}
-
-func (d *Dashboard) errorsHeadline(ctx context.Context) *landingCard {
-	// Try new errors first.
-	resp, err := d.reads.GetErrors(ctx, reads.GetErrorsRequest{NewOnly: true})
-	if err != nil {
-		return nil
-	}
-	if len(resp.Errors) == 0 {
-		// Fall back to all errors.
-		resp, err = d.reads.GetErrors(ctx, reads.GetErrorsRequest{})
-		if err != nil || len(resp.Errors) == 0 {
-			return nil
+func buildPillarStatus(outcomes []reads.OutcomeSummary, perfs []reads.PerfEndpoint, newErrors []reads.ErrorSummary, anomalies []reads.AnomalyEntry) []pillarStatusRow {
+	oTone, oStatus, oDetail := "ok", "nominal", fmt.Sprintf("all %d outcomes within range", len(outcomes))
+	drifted := 0
+	var worstOutcome string
+	for _, o := range outcomes {
+		if math.Abs(o.Sigma) > 2 {
+			drifted++
+			if worstOutcome == "" {
+				worstOutcome = o.Name
+			}
 		}
 	}
-	top := resp.Errors[0]
-	label := top.Name
-	if resp.Errors[0].FirstSeen == resp.Errors[0].LastSeen {
-		label += " (NEW)"
+	if drifted > 0 {
+		oTone = "med"
+		oStatus = fmt.Sprintf("%d outcome%s drifting", drifted, plural(drifted))
+		oDetail = worstOutcome
 	}
-	return &landingCard{
-		Label:     "Errors",
-		Headline:  label,
-		Sparkline: template.HTML(""),
-		Detail:    fmt.Sprintf("%d occurrences — last seen %s", top.Occurrences, top.LastSeen),
-		Link:      "/errors",
+	if len(outcomes) == 0 {
+		oDetail = "no outcomes tracked yet"
 	}
-}
 
-func (d *Dashboard) anomaliesHeadline(ctx context.Context) *landingCard {
-	resp, err := d.reads.GetAnomalies(ctx, reads.GetAnomaliesRequest{Since: 24 * time.Hour})
-	if err != nil || resp == nil || len(resp.Anomalies) == 0 {
-		return &landingCard{
-			Label:    "Anomalies",
-			Headline: "Nothing unusual",
-			Detail:   "All signals are within normal range",
-			Link:     "/anomalies",
+	pTone, pStatus, pDetail := "ok", "nominal", "P95 within baseline"
+	regressed := 0
+	var worstPerf string
+	for _, ep := range perfs {
+		if ep.DriftSigmas > 2 {
+			regressed++
+			if worstPerf == "" {
+				worstPerf = ep.Name
+			}
 		}
 	}
-	top := resp.Anomalies[0] // sorted by deviation descending
-	return &landingCard{
-		Label:    "Anomalies",
-		Headline: top.Name,
-		Detail:   fmt.Sprintf("%.1fσ deviation — %d in 24h vs baseline of %.0f", top.DeviationSigma, top.Current, top.BaselineMean),
-		Link:     "/anomalies",
+	if regressed > 0 {
+		pTone = "high"
+		pStatus = fmt.Sprintf("%d P95 regression%s", regressed, plural(regressed))
+		pDetail = worstPerf
+	}
+	if len(perfs) == 0 {
+		pDetail = "no endpoints tracked yet"
+	}
+
+	eTone, eStatus, eDetail := "ok", "nominal", "0 new fingerprints in 24h"
+	if len(newErrors) > 0 {
+		eTone = "high"
+		eStatus = fmt.Sprintf("%d new fingerprint%s", len(newErrors), plural(len(newErrors)))
+		eDetail = newErrors[0].Name
+	}
+
+	aTone, aStatus, aDetail := "ok", "0 open", ""
+	if len(anomalies) > 0 {
+		high := 0
+		for _, a := range anomalies {
+			if math.Abs(a.DeviationSigma) > 5 {
+				high++
+			}
+		}
+		aTone = "med"
+		aStatus = fmt.Sprintf("%d open", len(anomalies))
+		if high > 0 {
+			aTone = "high"
+			aStatus += fmt.Sprintf(" · %d high", high)
+		}
+		aDetail = fmt.Sprintf("worst %.1fσ on %s", anomalies[0].DeviationSigma, anomalies[0].Name)
+	}
+
+	return []pillarStatusRow{
+		{Name: "Outcomes", Tone: oTone, Status: oStatus, Detail: oDetail, Link: "/outcomes"},
+		{Name: "Performance", Tone: pTone, Status: pStatus, Detail: pDetail, Link: "/performance"},
+		{Name: "Errors", Tone: eTone, Status: eStatus, Detail: eDetail, Link: "/errors"},
+		{Name: "Anomalies", Tone: aTone, Status: aStatus, Detail: aDetail, Link: "/anomalies"},
 	}
 }
 
-func formatDrift(pct float64) string {
-	abs := math.Abs(pct)
+func computeVerdict(regressions []deploySignal) verdictData {
+	high := 0
+	for _, r := range regressions {
+		if r.Tone == "high" {
+			high++
+		}
+	}
+	if high > 0 {
+		return verdictData{
+			Label: "Watch",
+			Tone:  "high",
+			Note:  fmt.Sprintf("%d high-severity regression%s", high, plural(high)),
+		}
+	}
+	if len(regressions) > 0 {
+		return verdictData{
+			Label: "Drifting",
+			Tone:  "med",
+			Note:  fmt.Sprintf("%d signal%s above baseline", len(regressions), plural(len(regressions))),
+		}
+	}
+	return verdictData{
+		Label: "Healthy",
+		Tone:  "ok",
+		Note:  "no regressions detected",
+	}
+}
+
+func sigmaTone(sigma float64) string {
+	if sigma > 5 || sigma < -5 {
+		return "high"
+	}
+	return "med"
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	if sha == "" {
+		return "unknown"
+	}
+	return sha
+}
+
+func relativeTime(t time.Time, now time.Time) string {
+	d := now.Sub(t)
 	switch {
-	case abs < 1:
-		return "flat"
-	case pct > 0:
-		return fmt.Sprintf("↑ %.0f%%", pct)
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	default:
-		return fmt.Sprintf("↓ %.0f%%", abs)
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "yesterday"
+		}
+		return fmt.Sprintf("%d days ago", days)
 	}
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
