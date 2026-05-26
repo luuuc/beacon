@@ -17,10 +17,11 @@ import (
 type anomalyCardData struct {
 	ID           int64
 	AnomalyKind  string
-	BadgeClass   string // CSS class: "shift" or "spike"
+	BadgeClass   string // CSS class: "shift", "spike", "drift", "error", "drop"
 	Name         string
 	Dimension    string // formatted dimension string, empty if none
 	Current      int64
+	CurrentP95   string // formatted p95 latency (perf_drift only)
 	BaselineMean string
 	Sigma        string
 	Summary      string
@@ -51,8 +52,15 @@ func (d *Dashboard) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 
 func toAnomalyCard(a reads.AnomalyEntry) anomalyCardData {
 	badge := "shift"
-	if a.AnomalyKind == "dimension_spike" {
+	switch a.AnomalyKind {
+	case "dimension_spike":
 		badge = "spike"
+	case "perf_drift":
+		badge = "drift"
+	case "error_rate_spike":
+		badge = "error"
+	case "outcome_drop":
+		badge = "drop"
 	}
 
 	var dimStr string
@@ -78,6 +86,7 @@ func toAnomalyCard(a reads.AnomalyEntry) anomalyCardData {
 		Name:         a.Name,
 		Dimension:    dimStr,
 		Current:      a.Current,
+		CurrentP95:   fmt.Sprintf("%.0f", a.CurrentP95),
 		BaselineMean: fmt.Sprintf("%.0f", a.BaselineMean),
 		Sigma:        fmt.Sprintf("%.1fσ", a.DeviationSigma),
 		Summary:      a.Summary,

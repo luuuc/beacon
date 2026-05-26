@@ -2420,8 +2420,27 @@ h1 {
   border: 1px solid var(--danger);
 }
 
+.badge-drift {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
+}
+
+.badge-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.badge-drop {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
 @media (prefers-color-scheme: dark) {
-  .badge-spike {
+  .badge-spike,
+  .badge-error {
     border-color: rgba(248,81,73,0.3);
   }
 }

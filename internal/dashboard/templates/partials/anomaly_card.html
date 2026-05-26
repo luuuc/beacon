@@ -13,8 +13,13 @@
   <div class="card-dimension">{{.Dimension}}</div>
   {{end}}
   <div class="card-metrics">
+    {{if eq .AnomalyKind "perf_drift"}}
+    <span class="card-count">p95 {{.CurrentP95}}ms</span>
+    <span class="card-baseline">baseline {{.BaselineMean}}ms</span>
+    {{else}}
     <span class="card-count">{{.Current}} in 24h</span>
     <span class="card-baseline">baseline {{.BaselineMean}}</span>
+    {{end}}
     <span class="card-sigma">{{.Sigma}} deviation</span>
   </div>
   <div class="card-detail">{{.Summary}}</div>

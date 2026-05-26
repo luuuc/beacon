@@ -339,7 +339,7 @@ func (s *Server) registerTools() {
 
 	s.register(toolDef{
 		Name:        "beacon.anomalies",
-		Description: "List recent anomalies detected by the sigma-threshold detector. Returns volume shifts and dimension spikes sorted by deviation severity.",
+		Description: "List recent anomalies detected by the sigma-threshold detector. Returns volume shifts, dimension spikes, perf drift, error rate spikes, and outcome drops sorted by deviation severity.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

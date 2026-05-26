@@ -1022,6 +1022,7 @@ type AnomalyEntry struct {
 	Name           string         `json:"name"`
 	Dimension      map[string]any `json:"dimension,omitempty"`
 	Current        int64          `json:"current"`
+	CurrentP95     float64        `json:"current_p95,omitempty"`
 	BaselineMean   float64        `json:"baseline_mean"`
 	BaselineStddev float64        `json:"baseline_stddev"`
 	DeviationSigma float64        `json:"deviation_sigma"`
@@ -1055,18 +1056,28 @@ func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*A
 
 	entries := make([]AnomalyEntry, 0, len(rows))
 	for _, m := range rows {
-		var deviation, mean, stddev float64
+		var deviation, mean, stddev, currentP95 float64
 		if m.Sum != nil {
 			deviation = *m.Sum
 		}
 		if m.P50 != nil {
 			mean = *m.P50
 		}
-		if m.P95 != nil {
+
+		// perf_drift stores current p95 in P95 and baseline stddev in P99.
+		// All other types store baseline stddev in P95.
+		if m.Fingerprint == "perf_drift" {
+			if m.P95 != nil {
+				currentP95 = *m.P95
+			}
+			if m.P99 != nil {
+				stddev = *m.P99
+			}
+		} else if m.P95 != nil {
 			stddev = *m.P95
 		}
 
-		summary := anomalySummary(m.Fingerprint, m.Name, m.Dimensions, m.Count, mean, deviation)
+		summary := anomalySummary(m.Fingerprint, m.Name, m.Dimensions, m.Count, mean, deviation, m)
 
 		entries = append(entries, AnomalyEntry{
 			ID:             m.ID,
@@ -1075,6 +1086,7 @@ func (h *Handler) GetAnomalies(ctx context.Context, req GetAnomaliesRequest) (*A
 			Name:           m.Name,
 			Dimension:      m.Dimensions,
 			Current:        m.Count,
+			CurrentP95:     currentP95,
 			BaselineMean:   mean,
 			BaselineStddev: stddev,
 			DeviationSigma: deviation,
@@ -1131,29 +1143,56 @@ func (h *Handler) handleDismissAnomaly(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------------------
 // anomalySummary builds a human-scannable summary for an anomaly record.
-//
-//	volume_shift:    "GET /search saw 3× normal traffic (240 vs ~80/day) (12.0σ above baseline)"
-//	dimension_spike: "GET /items/:id from country=DE jumped to 47 (normally ~3/day) (8.1σ above baseline)"
-func anomalySummary(anomalyKind, name string, dims map[string]any, current int64, mean, sigma float64) string {
+func anomalySummary(anomalyKind, name string, dims map[string]any, current int64, mean, sigma float64, m beacondb.Metric) string {
 	sigmaStr := fmt.Sprintf("(%.1fσ above baseline)", sigma)
 
-	if anomalyKind == "dimension_spike" && len(dims) > 0 {
-		// Build "dim1=val1, dim2=val2" string.
-		keys := make([]string, 0, len(dims))
-		for k := range dims {
-			keys = append(keys, k)
+	switch anomalyKind {
+	case "dimension_spike":
+		if len(dims) > 0 {
+			keys := make([]string, 0, len(dims))
+			for k := range dims {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, fmt.Sprintf("%s=%v", k, dims[k]))
+			}
+			dimStr := strings.Join(parts, ", ")
+			return fmt.Sprintf("%s from %s jumped to %d (normally ~%.0f/day) %s",
+				name, dimStr, current, mean, sigmaStr)
 		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%v", k, dims[k]))
+
+	case "perf_drift":
+		var currentP95, baselineMean float64
+		if m.P95 != nil {
+			currentP95 = *m.P95
 		}
-		dimStr := strings.Join(parts, ", ")
-		return fmt.Sprintf("%s from %s jumped to %d (normally ~%.0f/day) %s",
-			name, dimStr, current, mean, sigmaStr)
+		baselineMean = mean
+		return fmt.Sprintf("%s p95 latency regressed to %.0fms (baseline ~%.0fms) %s",
+			name, currentP95, baselineMean, sigmaStr)
+
+	case "error_rate_spike":
+		if mean > 0 {
+			multiplier := float64(current) / mean
+			return fmt.Sprintf("%s errors spiked to %.0f× normal (%d vs ~%.0f/day) %s",
+				name, multiplier, current, mean, sigmaStr)
+		}
+		return fmt.Sprintf("%s saw %d errors (no prior baseline) %s",
+			name, current, sigmaStr)
+
+	case "outcome_drop":
+		sigmaStr = fmt.Sprintf("(%.1fσ below baseline)", sigma)
+		if mean > 0 {
+			pctDrop := (1 - float64(current)/mean) * 100
+			return fmt.Sprintf("%s dropped to %d (normally ~%.0f/day, down %.0f%%) %s",
+				name, current, mean, pctDrop, sigmaStr)
+		}
+		return fmt.Sprintf("%s dropped to %d events %s",
+			name, current, sigmaStr)
 	}
 
-	// Volume shift.
+	// Volume shift (default).
 	if mean > 0 {
 		multiplier := float64(current) / mean
 		return fmt.Sprintf("%s saw %.0f× normal traffic (%d vs ~%.0f/day) %s",
