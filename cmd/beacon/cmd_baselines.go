@@ -17,14 +17,14 @@ import (
 // cmdBaselines dispatches `beacon baselines <subcommand>`.
 func cmdBaselines(args []string, log *slog.Logger, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "beacon baselines: subcommand required (export)")
+		_, _ = fmt.Fprintln(stderr, "beacon baselines: subcommand required (export)")
 		return 2
 	}
 	switch args[0] {
 	case "export":
 		return cmdBaselinesExport(args[1:], log, stderr)
 	default:
-		fmt.Fprintf(stderr, "beacon baselines: unknown subcommand %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "beacon baselines: unknown subcommand %q\n", args[0])
 		return 2
 	}
 }
@@ -42,13 +42,13 @@ func cmdBaselinesExport(args []string, _ *slog.Logger, stderr io.Writer) int {
 
 	_, adapter, err := openAdapterForCLI(ctx, *configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon baselines export: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon baselines export: %v\n", err)
 		return 1
 	}
 	defer func() { _ = adapter.Close() }()
 
 	if err := adapter.Migrate(ctx); err != nil {
-		fmt.Fprintf(stderr, "beacon baselines export: migrate: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon baselines export: migrate: %v\n", err)
 		return 1
 	}
 
@@ -56,15 +56,15 @@ func cmdBaselinesExport(args []string, _ *slog.Logger, stderr io.Writer) int {
 		PeriodKind: beacondb.PeriodBaseline,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon baselines export: list baselines: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon baselines export: list baselines: %v\n", err)
 		return 1
 	}
 
 	if err := writeBaselinesSQL(os.Stdout, rows); err != nil {
-		fmt.Fprintf(stderr, "beacon baselines export: write: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon baselines export: write: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stderr, "exported %d baseline row(s)\n", len(rows))
+	_, _ = fmt.Fprintf(stderr, "exported %d baseline row(s)\n", len(rows))
 	return 0
 }
 
@@ -116,7 +116,7 @@ func baselineInsertSQL(m beacondb.Metric) (string, error) {
 	b.WriteString(", ")
 	b.WriteString(sqlTimestamp(m.PeriodStart))
 	b.WriteString(", ")
-	b.WriteString(fmt.Sprintf("%d", m.Count))
+	fmt.Fprintf(&b, "%d", m.Count)
 	b.WriteString(", ")
 	b.WriteString(sqlFloatPtr(m.Sum))
 	b.WriteString(", ")

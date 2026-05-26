@@ -49,7 +49,7 @@ Run 'beacon <command> -h' for command-specific flags.
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintf(stderr, usage, version.Version)
+		_, _ = fmt.Fprintf(stderr, usage, version.Version)
 		return 2
 	}
 
@@ -68,14 +68,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "mcp":
 		return cmdMCP(rest, stdout, stderr)
 	case "version", "-v", "--version":
-		fmt.Fprintf(stdout, "beacon %s\n", version.Version)
+		_, _ = fmt.Fprintf(stdout, "beacon %s\n", version.Version)
 		return 0
 	case "help", "-h", "--help":
-		fmt.Fprintf(stdout, usage, version.Version)
+		_, _ = fmt.Fprintf(stdout, usage, version.Version)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "beacon: unknown command %q\n\n", cmd)
-		fmt.Fprintf(stderr, usage, version.Version)
+		_, _ = fmt.Fprintf(stderr, "beacon: unknown command %q\n\n", cmd)
+		_, _ = fmt.Fprintf(stderr, usage, version.Version)
 		return 2
 	}
 }
@@ -90,11 +90,11 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon serve: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon serve: %v\n", err)
 		return 1
 	}
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(stderr, "beacon serve: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon serve: %v\n", err)
 		return 1
 	}
 
@@ -105,14 +105,14 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 	// binary refuses to start so the supervisor surfaces the error.
 	kind, err := adapterfactory.ResolveKind(cfg.Database)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon serve: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon serve: %v\n", err)
 		return 1
 	}
 	openCtx, cancelOpen := context.WithTimeout(ctx, 10*time.Second)
 	adapter, err := adapterfactory.Open(openCtx, cfg.Database)
 	cancelOpen()
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon serve: open adapter: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon serve: open adapter: %v\n", err)
 		return 1
 	}
 	defer func() { _ = adapter.Close() }()
@@ -120,7 +120,7 @@ func cmdServe(args []string, log *slog.Logger, stderr io.Writer) int {
 	migCtx, cancelMig := context.WithTimeout(ctx, 30*time.Second)
 	if err := adapter.Migrate(migCtx); err != nil {
 		cancelMig()
-		fmt.Fprintf(stderr, "beacon serve: migrate: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon serve: migrate: %v\n", err)
 		return 1
 	}
 	cancelMig()

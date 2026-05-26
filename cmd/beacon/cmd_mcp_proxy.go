@@ -22,14 +22,14 @@ const (
 // cmdMCP dispatches `beacon mcp <subcommand>`.
 func cmdMCP(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "beacon mcp: subcommand required (proxy)")
+		_, _ = fmt.Fprintln(stderr, "beacon mcp: subcommand required (proxy)")
 		return 2
 	}
 	switch args[0] {
 	case "proxy":
 		return cmdMCPProxy(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	default:
-		fmt.Fprintf(stderr, "beacon mcp: unknown subcommand %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "beacon mcp: unknown subcommand %q\n", args[0])
 		return 2
 	}
 }
@@ -45,11 +45,11 @@ func cmdMCPProxy(args []string, stdin io.Reader, stdout, stderr io.Writer, geten
 	fs.SetOutput(stderr)
 	token := fs.String("token", "", "bearer token (overrides BEACON_AUTH_TOKEN)")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: beacon mcp proxy [flags] [endpoint]\n\n")
-		fmt.Fprintf(stderr, "Stdio-to-HTTP proxy for MCP clients (Claude Code, Claude Desktop, Cursor).\n")
-		fmt.Fprintf(stderr, "Reads JSON-RPC from stdin, POSTs to the endpoint, writes responses to stdout.\n\n")
-		fmt.Fprintf(stderr, "Endpoint defaults to %s if omitted.\n\n", defaultEndpoint)
-		fmt.Fprintf(stderr, "Flags:\n")
+		_, _ = fmt.Fprintf(stderr, "Usage: beacon mcp proxy [flags] [endpoint]\n\n")
+		_, _ = fmt.Fprintf(stderr, "Stdio-to-HTTP proxy for MCP clients (Claude Code, Claude Desktop, Cursor).\n")
+		_, _ = fmt.Fprintf(stderr, "Reads JSON-RPC from stdin, POSTs to the endpoint, writes responses to stdout.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Endpoint defaults to %s if omitted.\n\n", defaultEndpoint)
+		_, _ = fmt.Fprintf(stderr, "Flags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -98,7 +98,7 @@ func cmdMCPProxy(args []string, stdin io.Reader, stdout, stderr io.Writer, geten
 
 		if resp.StatusCode == http.StatusUnauthorized {
 			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			logger.Printf("POST %s: 401 unauthorized", endpoint)
 			return 1
 		}
@@ -107,7 +107,7 @@ func cmdMCPProxy(args []string, stdin io.Reader, stdout, stderr io.Writer, geten
 		// json.NewEncoder already includes a trailing newline, so we
 		// don't add another — one JSON object per line, no blanks.
 		_, copyErr := io.Copy(stdout, resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if copyErr != nil {
 			logger.Printf("read response: %v", copyErr)
 			return 1

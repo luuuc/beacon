@@ -68,8 +68,8 @@ func TestInitSkipsExistingFiles(t *testing.T) {
 	chdir(t, dir)
 
 	// Pre-create the files.
-	os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("existing"), 0o644)
-	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte("existing"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("existing"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte("existing"), 0o644)
 
 	var out, errb bytes.Buffer
 	code := cmdInit([]string{"--database", "postgres"}, &out, &errb)
@@ -174,7 +174,7 @@ func chdir(t *testing.T, dir string) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chdir(prev) })
+	t.Cleanup(func() { _ = os.Chdir(prev) })
 }
 
 func assertFileExists(t *testing.T, path string) {

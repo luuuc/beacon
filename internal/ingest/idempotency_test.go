@@ -8,8 +8,8 @@ import (
 
 func TestIdempStoreEntryCap(t *testing.T) {
 	s := newIdempStore(10 * time.Minute)
-	cap := 100
-	s.maxEntries = cap
+	maxCap := 100
+	s.maxEntries = maxCap
 
 	base := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
 	clock := base
@@ -17,20 +17,20 @@ func TestIdempStoreEntryCap(t *testing.T) {
 
 	// Fill past the cap. Each entry gets a distinct timestamp so we can
 	// tell which half survived.
-	for i := 0; i < cap*3; i++ {
+	for i := 0; i < maxCap*3; i++ {
 		s.record(fmt.Sprintf("k%d", i))
 		clock = clock.Add(time.Millisecond)
 	}
 
-	if n := len(s.seen); n > cap {
-		t.Fatalf("len(seen) = %d, want ≤ %d after cap trip", n, cap)
+	if n := len(s.seen); n > maxCap {
+		t.Fatalf("len(seen) = %d, want ≤ %d after cap trip", n, maxCap)
 	}
 	if n := len(s.seen); n == 0 {
 		t.Fatal("len(seen) = 0, eviction nuked everything")
 	}
 
 	// The most recent key should still be present.
-	if !s.wasSeen(fmt.Sprintf("k%d", cap*3-1)) {
+	if !s.wasSeen(fmt.Sprintf("k%d", maxCap*3-1)) {
 		t.Errorf("newest key evicted")
 	}
 	// The oldest key should be gone.

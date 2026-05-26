@@ -56,7 +56,7 @@ func fakeRPC(wantToken string) http.HandlerFunc {
 			result = map[string]any{"tools": []any{}}
 		default:
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      req.ID,
 				"error":   map[string]any{"code": -32601, "message": "method not found"},
@@ -65,7 +65,7 @@ func fakeRPC(wantToken string) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      req.ID,
 			"result":  result,

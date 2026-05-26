@@ -11,7 +11,7 @@ import (
 // Adapter method is exercised there, which is why there are no per-method
 // unit tests. See the package doc comment.
 func TestMemfakeConformance(t *testing.T) {
-	beacondb.RunConformance(t, func(tb testing.TB) beacondb.Adapter {
+	beacondb.RunConformance(t, func(_ testing.TB) beacondb.Adapter {
 		return New()
 	})
 }

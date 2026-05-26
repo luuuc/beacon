@@ -22,9 +22,9 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(database, "d", "postgres", "database adapter (alias for -database)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: beacon init [flags]\n\n")
-		fmt.Fprintf(stderr, "Generate starter files for a new Beacon installation.\n\n")
-		fmt.Fprintf(stderr, "Flags:\n")
+		_, _ = fmt.Fprintf(stderr, "Usage: beacon init [flags]\n\n")
+		_, _ = fmt.Fprintf(stderr, "Generate starter files for a new Beacon installation.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Flags:\n")
 		fs.PrintDefaults()
 	}
 
@@ -35,7 +35,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	switch *database {
 	case "postgres", "mysql", "sqlite":
 	default:
-		fmt.Fprintf(stderr, "beacon init: unsupported database %q (choose postgres, mysql, or sqlite)\n", *database)
+		_, _ = fmt.Fprintf(stderr, "beacon init: unsupported database %q (choose postgres, mysql, or sqlite)\n", *database)
 		return 2
 	}
 
@@ -45,7 +45,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	compose := generateCompose(*database)
 	n, err := writeFile("docker-compose.yml", compose, stdout, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon init: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon init: %v\n", err)
 		return 1
 	}
 	wrote += n
@@ -54,7 +54,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	mcp := generateMCPJSON(*endpoint)
 	n, err = writeFile(".mcp.json", mcp, stdout, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon init: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon init: %v\n", err)
 		return 1
 	}
 	wrote += n
@@ -64,26 +64,26 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		rb := generateRailsInitializer(*endpoint)
 		n, err = writeFile(filepath.Join("config", "initializers", "beacon.rb"), rb, stdout, stderr)
 		if err != nil {
-			fmt.Fprintf(stderr, "beacon init: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "beacon init: %v\n", err)
 			return 1
 		}
 		wrote += n
 	}
 
 	// --- Next steps ---
-	fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintln(stdout)
 	if wrote == 0 {
-		fmt.Fprintln(stdout, "All files already exist — nothing to write.")
+		_, _ = fmt.Fprintln(stdout, "All files already exist — nothing to write.")
 	} else {
-		fmt.Fprintln(stdout, "Next steps:")
+		_, _ = fmt.Fprintln(stdout, "Next steps:")
 		if *ruby {
-			fmt.Fprintln(stdout, "  docker compose up -d && bundle add beacon-client && rails s")
+			_, _ = fmt.Fprintln(stdout, "  docker compose up -d && bundle add beacon-client && rails s")
 		} else {
-			fmt.Fprintln(stdout, "  docker compose up -d")
+			_, _ = fmt.Fprintln(stdout, "  docker compose up -d")
 		}
-		fmt.Fprintf(stdout, "  open %s\n", *endpoint)
-		fmt.Fprintln(stdout)
-		fmt.Fprintf(stdout, "Wrote %d file(s). Edit them to match your setup.\n", wrote)
+		_, _ = fmt.Fprintf(stdout, "  open %s\n", *endpoint)
+		_, _ = fmt.Fprintln(stdout)
+		_, _ = fmt.Fprintf(stdout, "Wrote %d file(s). Edit them to match your setup.\n", wrote)
 	}
 
 	return 0
@@ -93,7 +93,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 // Returns 1 if the file was written, 0 if it was skipped.
 func writeFile(path, content string, stdout, stderr io.Writer) (int, error) {
 	if _, err := os.Stat(path); err == nil {
-		fmt.Fprintf(stderr, "  skip %s (already exists)\n", path)
+		_, _ = fmt.Fprintf(stderr, "  skip %s (already exists)\n", path)
 		return 0, nil
 	}
 
@@ -108,7 +108,7 @@ func writeFile(path, content string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("write %s: %w", path, err)
 	}
 
-	fmt.Fprintf(stdout, "  wrote %s\n", path)
+	_, _ = fmt.Fprintf(stdout, "  wrote %s\n", path)
 	return 1, nil
 }
 

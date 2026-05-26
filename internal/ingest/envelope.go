@@ -160,6 +160,8 @@ func (e *envelopeJSON) toEvent(now time.Time) (beacondb.Event, []string, error) 
 		}
 		out.Fingerprint = fp
 		delete(props, "fingerprint")
+	case beacondb.KindOutcome, beacondb.KindAmbient, beacondb.KindBaseline:
+		// No special field extraction needed.
 	}
 
 	if len(props) == 0 {

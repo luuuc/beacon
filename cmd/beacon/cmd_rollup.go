@@ -20,14 +20,14 @@ import (
 // cmdRollup dispatches `beacon rollup <subcommand>`.
 func cmdRollup(args []string, log *slog.Logger, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "beacon rollup: subcommand required (recompute)")
+		_, _ = fmt.Fprintln(stderr, "beacon rollup: subcommand required (recompute)")
 		return 2
 	}
 	switch args[0] {
 	case "recompute":
 		return cmdRollupRecompute(args[1:], log, stderr)
 	default:
-		fmt.Fprintf(stderr, "beacon rollup: unknown subcommand %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "beacon rollup: unknown subcommand %q\n", args[0])
 		return 2
 	}
 }
@@ -43,12 +43,12 @@ func cmdRollupRecompute(args []string, log *slog.Logger, stderr io.Writer) int {
 		return 2
 	}
 	if *sinceStr == "" {
-		fmt.Fprintln(stderr, "beacon rollup recompute: --since is required")
+		_, _ = fmt.Fprintln(stderr, "beacon rollup recompute: --since is required")
 		return 2
 	}
 	since, err := parseSince(*sinceStr)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
 		return 2
 	}
 
@@ -57,13 +57,13 @@ func cmdRollupRecompute(args []string, log *slog.Logger, stderr io.Writer) int {
 
 	cfg, adapter, err := openAdapterForCLI(ctx, *configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
 		return 1
 	}
 	defer func() { _ = adapter.Close() }()
 
 	if err := adapter.Migrate(ctx); err != nil {
-		fmt.Fprintf(stderr, "beacon rollup recompute: migrate: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon rollup recompute: migrate: %v\n", err)
 		return 1
 	}
 
@@ -74,7 +74,7 @@ func cmdRollupRecompute(args []string, log *slog.Logger, stderr io.Writer) int {
 		"name", *nameStr,
 	)
 	if err := worker.RecomputeRange(ctx, since, beacondb.Kind(*kindStr), *nameStr); err != nil {
-		fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "beacon rollup recompute: %v\n", err)
 		return 1
 	}
 	log.Info("recompute complete")

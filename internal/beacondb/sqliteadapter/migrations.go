@@ -63,7 +63,7 @@ func appliedVersions(ctx context.Context, db *sql.DB) (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int]bool{}
 	for rows.Next() {
 		var v int

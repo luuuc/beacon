@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 	"time"
 
@@ -131,6 +132,7 @@ func TestReadyzFlipsWhenRollupTickFails(t *testing.T) {
 	check := RollupTickCheck(worker.LastTick, time.Nanosecond)
 	// Small spin to guarantee time.Since(pinned) > 1ns.
 	for time.Since(pinned) < 2*time.Nanosecond {
+		runtime.Gosched()
 	}
 	if err := check(context.Background()); err == nil {
 		t.Error("readyz check should fail when rollup tick is stale after a failure")

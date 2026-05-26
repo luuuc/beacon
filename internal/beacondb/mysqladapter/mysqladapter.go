@@ -92,7 +92,7 @@ func (a *Adapter) InsertEvents(ctx context.Context, events []beacondb.Event) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	ids := make([]int64, len(events))
 	for i, e := range events {
@@ -174,7 +174,7 @@ SELECT id, kind, name, actor_type, actor_id, duration_ms, status,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []beacondb.Event
 	for rows.Next() {
 		var (
@@ -278,7 +278,7 @@ func (a *Adapter) UpsertMetrics(ctx context.Context, metrics []beacondb.Metric) 
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for i, m := range metrics {
 		dims, err := marshalJSON(m.Dimensions)
@@ -359,7 +359,7 @@ SELECT id, kind, name, period_kind, period_window, period_start, count, sum, p50
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []beacondb.Metric
 	for rows.Next() {
 		var (

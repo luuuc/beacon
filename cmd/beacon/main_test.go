@@ -95,6 +95,6 @@ func clearBeaconEnv(t *testing.T) {
 		"BEACON_DATABASE_URL", "BEACON_DATABASE_SCHEMA",
 	} {
 		t.Setenv(k, "")
-		os.Unsetenv(k)
+		_ = os.Unsetenv(k)
 	}
 }

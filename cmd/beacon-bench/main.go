@@ -57,12 +57,12 @@ func main() {
 		cfg.BeaconBin = resolveBeaconBinary()
 	}
 	if cfg.BeaconBin == "" {
-		fmt.Fprintln(os.Stderr, "beacon-bench: could not find the beacon binary; pass -binary")
+		_, _ = fmt.Fprintln(os.Stderr, "beacon-bench: could not find the beacon binary; pass -binary")
 		os.Exit(2)
 	}
 
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "beacon-bench: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "beacon-bench: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -88,7 +88,7 @@ func run(cfg config) error {
 		return err
 	}
 	if !cfg.KeepDB {
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
 
 	configPath := filepath.Join(tmpDir, "beacon.yml")
@@ -170,7 +170,7 @@ func run(cfg config) error {
 	}
 	if len(failed) > 0 {
 		for _, f := range failed {
-			fmt.Fprintf(os.Stderr, "FAIL: %s\n", f)
+			_, _ = fmt.Fprintf(os.Stderr, "FAIL: %s\n", f)
 		}
 		return fmt.Errorf("bench failed: %d threshold breach(es)", len(failed))
 	}
@@ -269,7 +269,7 @@ func postOne(client *http.Client, url string, seq int) error {
 	if err != nil {
 		return fmt.Errorf("post #%d: %w", seq, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("post #%d: HTTP %d", seq, resp.StatusCode)
 	}
