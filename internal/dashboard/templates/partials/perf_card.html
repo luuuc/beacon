@@ -1,12 +1,15 @@
 {{define "perf_card.html"}}
-<a href="/performance/{{pathEscape .Name}}" class="card">
-  <div class="card-name">{{.Name}}</div>
-  <div class="card-sparkline">{{.Sparkline}}</div>
-  <div class="card-metrics">
-    <span class="card-p95">P95 {{.CurrentP95}}</span>
-    <span class="card-baseline">baseline {{.BaselineP95}}</span>
-    {{if .Drift}}<span class="card-drift {{.DriftClass}}">{{.Drift}}</span>{{end}}
+<a href="/performance/{{pathEscape .Name}}" class="pl-row">
+  <div class="pl-row-main">
+    <div class="pl-row-titlerow">
+      {{if eq .Kind "job"}}<span class="method method-job">JOB</span>{{else}}<span class="method {{.MethodClass}}">{{.Method}}</span>{{end}}
+      <span class="pl-row-path mono">{{.Path}}</span>
+    </div>
   </div>
-  <div class="card-volume">{{.Volume}} req</div>
+  <div class="pl-row-spark">{{.Sparkline}}</div>
+  <div class="pl-row-num mono">{{.CurrentP95}}</div>
+  <div class="pl-row-base mono">{{.BaselineP95}}</div>
+  <div class="pl-row-delta">{{.SigmaPill}}</div>
+  <div class="pl-row-req mono">{{.Volume}}<span class="pl-row-req-unit"> req</span></div>
 </a>
 {{end}}

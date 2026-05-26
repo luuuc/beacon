@@ -799,6 +799,114 @@ func TestCompareDeployBaseline_subsecondTruncation(t *testing.T) {
 // TestCompareDeployBaseline_prefixSubsecondBaseline verifies that a baseline
 // captured before the truncation fix (with sub-second period_start still in
 // the DB) can still be matched by the comparison path.
+// ---------------------------------------------------------------------------
+// percentile edge cases
+// ---------------------------------------------------------------------------
+
+func TestPercentile(t *testing.T) {
+	cases := []struct {
+		name   string
+		sorted []float64
+		p      float64
+		want   float64
+	}{
+		{"empty", nil, 0.5, 0},
+		{"single", []float64{42}, 0.5, 42},
+		{"single p99", []float64{42}, 0.99, 42},
+		{"p0", []float64{1, 2, 3}, 0.0, 1},
+		{"p50 three", []float64{1, 2, 3}, 0.5, 2},
+		{"p95 ten", []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 0.95, 10},
+		{"p99 ten", []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 0.99, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := percentile(tc.sorted, tc.p)
+			if got != tc.want {
+				t.Errorf("percentile(%v, %v) = %v, want %v", tc.sorted, tc.p, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Run (context cancel exits)
+// ---------------------------------------------------------------------------
+
+func TestRun_contextCancelExits(t *testing.T) {
+	w, _ := newTestWorker(t, fixedNow)
+	w.cfg.TickInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	// Let it tick at least once.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	err := <-done
+	if err != nil {
+		t.Errorf("Run returned error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RecomputeRange
+// ---------------------------------------------------------------------------
+
+func TestRecomputeRange(t *testing.T) {
+	w, fake := newTestWorker(t, fixedNow)
+	ctx := context.Background()
+
+	hour := fixedNow.Truncate(time.Hour)
+	seedEvents(t, fake,
+		beacondb.Event{Kind: beacondb.KindOutcome, Name: "signup.completed", CreatedAt: hour.Add(5 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindOutcome, Name: "signup.completed", CreatedAt: hour.Add(10 * time.Minute)},
+	)
+
+	since := fixedNow.Add(-1 * time.Hour)
+	if err := w.RecomputeRange(ctx, since, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := fake.ListMetrics(ctx, beacondb.MetricFilter{Kind: beacondb.KindOutcome, PeriodKind: beacondb.PeriodHour})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].Count != 2 {
+		t.Errorf("count = %d, want 2", rows[0].Count)
+	}
+}
+
+func TestRecomputeRange_filteredByKind(t *testing.T) {
+	w, fake := newTestWorker(t, fixedNow)
+	ctx := context.Background()
+
+	hour := fixedNow.Truncate(time.Hour)
+	seedEvents(t, fake,
+		beacondb.Event{Kind: beacondb.KindOutcome, Name: "signup.completed", CreatedAt: hour.Add(5 * time.Minute)},
+		beacondb.Event{Kind: beacondb.KindPerf, Name: "GET /items", DurationMs: dur(100), CreatedAt: hour.Add(6 * time.Minute)},
+	)
+
+	since := fixedNow.Add(-1 * time.Hour)
+	if err := w.RecomputeRange(ctx, since, beacondb.KindOutcome, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := fake.ListMetrics(ctx, beacondb.MetricFilter{PeriodKind: beacondb.PeriodHour})
+	// Only the outcome event's hour bucket should have been recomputed, but
+	// aggregateHour re-reads ALL events in the bucket, so both kinds appear.
+	found := false
+	for _, r := range rows {
+		if r.Kind == beacondb.KindOutcome && r.Name == "signup.completed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected outcome metric after recompute")
+	}
+}
+
 func TestCompareDeployBaseline_prefixSubsecondBaseline(t *testing.T) {
 	deployTime := time.Date(2026, 4, 10, 10, 0, 0, 987_654_000, time.UTC)
 	now := deployTime.Add(2 * time.Hour)

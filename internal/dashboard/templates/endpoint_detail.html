@@ -1,25 +1,96 @@
 {{define "content"}}
-<h1>{{.Name}}</h1>
-<p class="subtitle">Endpoint performance detail</p>
-{{if .Chart}}
-<h3 class="chart-title">P95 Latency</h3>
-<div class="chart-container">{{.Chart}}</div>
-{{end}}
-{{if .VolumeChart}}
-<h3 class="chart-title">Request Volume</h3>
-<div class="chart-container">{{.VolumeChart}}</div>
-{{end}}
-<div class="detail-stats">
-  {{if .Stats}}
-  <dl class="stats-grid">
-    {{range .Stats}}
-    <div class="stat">
-      <dt>{{.Label}}</dt>
-      <dd>{{.Value}}</dd>
+<div class="pd-page">
+  <div class="pd-header">
+    <div class="pd-crumbs mono">
+      <a href="/performance">performance</a>
+      <span>/</span>
+      <span class="pd-crumb-current">{{if .Method}}{{.Method | lower}}{{else}}{{.Name}}{{end}}</span>
     </div>
-    {{end}}
-  </dl>
-  {{end}}
+    <div class="pd-title-block">
+      <div class="pd-title-meta">
+        {{if .Method}}<span class="method {{.MethodClass}}">{{.Method}}</span>{{end}}
+        {{if eq .Kind "job"}}<span class="method method-job">JOB</span>{{end}}
+        <span class="meta-label" style="letter-spacing:0.08em">Endpoint detail</span>
+      </div>
+      <h1 class="pd-title mono">{{.Path}}</h1>
+      <div class="pd-pill-row">
+        {{.SigmaPill}}
+        <span class="pd-pill-sub mono">{{.SubtitleText}}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pd-body">
+    <div class="pd-main">
+      {{if .Chart}}
+      <section class="pd-section">
+        <header class="pd-section-head">
+          <h2>P95 Latency</h2>
+          <div class="pd-section-meta mono">
+            <span>baseline {{.BaselineMean}}ms ± {{.BaselineStd}}ms</span>
+            <span class="pd-sep">·</span>
+            <span>window {{.Window}}</span>
+            <span class="pd-sep">·</span>
+            <span>period {{.Period}}</span>
+          </div>
+        </header>
+        <div class="pd-chart-wrap">{{.Chart}}</div>
+      </section>
+      {{end}}
+
+      {{if .VolumeChart}}
+      <section class="pd-section">
+        <header class="pd-section-head">
+          <h2>Request volume</h2>
+          <div class="pd-section-meta mono">
+            <span>{{.Requests}} requests · {{.Window}}</span>
+          </div>
+        </header>
+        <div class="pd-chart-wrap">{{.VolumeChart}}</div>
+      </section>
+      {{end}}
+    </div>
+
+    <aside class="pd-rail">
+      <div class="pd-rail-section">
+        <div class="meta-label">Current P95</div>
+        <div class="pd-rail-big mono">{{.CurrentP95}}</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="pd-rail-section">
+        <div class="meta-label">Baseline mean</div>
+        <div class="meta-value mono">{{.BaselineMean}}<span class="pd-rail-unit">ms</span></div>
+        <div class="pd-rail-sub mono">hourly · {{.Window}} window</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="pd-rail-section">
+        <div class="meta-label">Baseline stddev</div>
+        <div class="meta-value mono">{{.BaselineStd}}<span class="pd-rail-unit">ms</span></div>
+        <div class="pd-rail-sub mono">σ unit for Δ calc</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="pd-rail-section">
+        <div class="meta-label">Requests</div>
+        <div class="meta-value mono">{{.Requests}}</div>
+        <div class="pd-rail-sub mono">last {{.Window}}</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="pd-rail-section">
+        <div class="meta-label">Window</div>
+        <div class="meta-value mono">{{.Window}}</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="pd-rail-section">
+        <div class="meta-label">Period</div>
+        <div class="meta-value mono">{{.Period}}</div>
+      </div>
+    </aside>
+  </div>
 </div>
 {{end}}
 {{define "endpoint_detail.html"}}{{template "layout.html" .}}{{end}}

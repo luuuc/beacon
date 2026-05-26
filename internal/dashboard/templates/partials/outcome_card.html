@@ -1,10 +1,14 @@
 {{define "outcome_card.html"}}
-<a href="/outcomes/{{.Name}}" class="card">
-  <div class="card-name">{{.Name}}</div>
-  <div class="card-sparkline">{{.Sparkline}}</div>
-  <div class="card-metrics">
-    <span class="card-count">{{.Count}}</span>
-    {{if .Drift}}<span class="card-drift {{.DriftClass}}">{{.Drift}}</span>{{end}}
+<a href="/outcomes/{{.Name}}" class="ol-row">
+  <div class="ol-row-main">
+    <div class="ol-row-titlerow">
+      <span class="ol-row-tag mono">{{.Name}}</span>
+    </div>
+    {{if .Description}}<div class="ol-row-desc">{{.Description}}</div>{{end}}
   </div>
+  <div class="ol-row-spark">{{.Sparkline}}</div>
+  <div class="ol-row-num mono">{{.PerDay}}<span class="ol-row-num-unit">/day</span></div>
+  <div class="ol-row-base mono">{{.BaselineMean}}</div>
+  <div class="ol-row-delta">{{.SigmaPill}}</div>
 </a>
 {{end}}

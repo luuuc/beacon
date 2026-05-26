@@ -263,13 +263,10 @@ func TestPerformancePage(t *testing.T) {
 		t.Fatalf("GET /performance = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "GET /dashboard") {
-		t.Error("missing endpoint card")
+	if !strings.Contains(body, "/dashboard") {
+		t.Error("missing endpoint path in performance list")
 	}
-	// seedTestData seeds 48 hours from -48h. fixedNow is 12:00 (on the hour),
-	// so cutoff is exactly -24h; hours 24-47 fall in the current window.
-	// 24 × 50 = 1,200 requests.
-	if !strings.Contains(body, "1,200 req") {
+	if !strings.Contains(body, "1,200") {
 		t.Error("missing volume on performance card")
 	}
 }
@@ -301,7 +298,7 @@ func TestPerformanceDetailPage(t *testing.T) {
 	if !strings.Contains(body, "P95 Latency") {
 		t.Error("missing latency chart title")
 	}
-	if !strings.Contains(body, "Request Volume") {
+	if !strings.Contains(body, "Request volume") {
 		t.Error("missing volume chart title")
 	}
 	if c := strings.Count(body, "class=\"chart\""); c != 2 {
@@ -398,7 +395,7 @@ func TestErrorsPage_newBadge(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors", nil))
 	body := rec.Body.String()
 
-	if !strings.Contains(body, "badge-new") {
+	if !strings.Contains(body, "el-pill-new") {
 		t.Error("missing NEW badge for new-fp")
 	}
 }
@@ -437,11 +434,11 @@ func TestErrorDetailPage_stackTrace(t *testing.T) {
 	if !strings.Contains(body, "RuntimeError") {
 		t.Error("missing error name")
 	}
-	if !strings.Contains(body, "checkout_controller.rb:42") {
-		t.Error("missing stack trace content")
+	if !strings.Contains(body, "checkout_controller.rb") {
+		t.Error("missing stack trace file")
 	}
-	if !strings.Contains(body, "<pre>") {
-		t.Error("stack trace not in <pre> block")
+	if !strings.Contains(body, "ed-stack") {
+		t.Error("stack trace not rendered in ed-stack layout")
 	}
 }
 
@@ -1095,5 +1092,863 @@ func TestChartSVG_deployLabels(t *testing.T) {
 	}
 	if !strings.Contains(svg, "abc1234") {
 		t.Error("SHA text not in SVG")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// errorStatus
+// ---------------------------------------------------------------------------
+
+func TestErrorStatus(t *testing.T) {
+	now := fixedNow
+	cases := []struct {
+		name       string
+		summary    reads.ErrorSummary
+		deploySHA  string
+		deployTime time.Time
+		want       string
+	}{
+		{
+			"no deploy, first seen < 24h",
+			reads.ErrorSummary{FirstSeen: now.Add(-12 * time.Hour).Format(time.RFC3339)},
+			"", time.Time{},
+			"new",
+		},
+		{
+			"no deploy, first seen > 24h",
+			reads.ErrorSummary{FirstSeen: now.Add(-48 * time.Hour).Format(time.RFC3339)},
+			"", time.Time{},
+			"unresolved",
+		},
+		{
+			"introduced in latest deploy",
+			reads.ErrorSummary{IntroducedDeploySHA: "abc123"},
+			"abc123", now.Add(-1 * time.Hour),
+			"new",
+		},
+		{
+			"last seen before latest deploy",
+			reads.ErrorSummary{
+				IntroducedDeploySHA: "old-sha",
+				LastSeen:            now.Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+			"abc123", now.Add(-1 * time.Hour),
+			"resolved",
+		},
+		{
+			"last seen after latest deploy",
+			reads.ErrorSummary{
+				IntroducedDeploySHA: "old-sha",
+				LastSeen:            now.Add(-30 * time.Minute).Format(time.RFC3339),
+			},
+			"abc123", now.Add(-1 * time.Hour),
+			"unresolved",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := errorStatus(tc.summary, tc.deploySHA, tc.deployTime, now)
+			if got != tc.want {
+				t.Errorf("errorStatus = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// trendDisplay
+// ---------------------------------------------------------------------------
+
+func TestTrendDisplay(t *testing.T) {
+	cases := []struct {
+		trend     string
+		wantIcon  string
+		wantClass string
+	}{
+		{"increasing", "↑", "ed-trend-up"},
+		{"decreasing", "↓", "ed-trend-down"},
+		{"stable", "→", "ed-trend-flat"},
+		{"", "→", "ed-trend-flat"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.trend, func(t *testing.T) {
+			icon, class := trendDisplay(tc.trend)
+			if icon != tc.wantIcon {
+				t.Errorf("icon = %q, want %q", icon, tc.wantIcon)
+			}
+			if class != tc.wantClass {
+				t.Errorf("class = %q, want %q", class, tc.wantClass)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseStackTrace
+// ---------------------------------------------------------------------------
+
+func TestParseStackTrace(t *testing.T) {
+	trace := "app/models/item.rb:42:in `title'\n/gems/activerecord/lib/base.rb:10\napp/controllers/items_controller.rb:15\n\n"
+	frames := parseStackTrace(trace)
+	if len(frames) != 3 {
+		t.Fatalf("frames = %d, want 3", len(frames))
+	}
+	if frames[0].File != "app/models/item.rb" {
+		t.Errorf("frame 0 file = %q", frames[0].File)
+	}
+	if frames[0].Line != "42" {
+		t.Errorf("frame 0 line = %q", frames[0].Line)
+	}
+	if !frames[0].InApp {
+		t.Error("frame 0 should be in-app")
+	}
+	if frames[1].InApp {
+		t.Error("frame 1 should be framework")
+	}
+}
+
+func TestParseStackTrace_empty(t *testing.T) {
+	frames := parseStackTrace("")
+	if len(frames) != 0 {
+		t.Errorf("frames = %d, want 0", len(frames))
+	}
+}
+
+func TestParseStackTrace_genericFormat(t *testing.T) {
+	trace := "some/file.go:99\nanother/file.go:42:in `method'"
+	frames := parseStackTrace(trace)
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(frames))
+	}
+	if frames[0].File != "some/file.go" {
+		t.Errorf("frame 0 file = %q", frames[0].File)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatTimeAgo
+// ---------------------------------------------------------------------------
+
+func TestFormatTimeAgo(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name string
+		ts   string
+		want string
+	}{
+		{"just now", now.Add(-10 * time.Second).Format(time.RFC3339), "just now"},
+		{"minutes", now.Add(-5 * time.Minute).Format(time.RFC3339), "5m ago"},
+		{"hours", now.Add(-3 * time.Hour).Format(time.RFC3339), "3h ago"},
+		{"days", now.Add(-48 * time.Hour).Format(time.RFC3339), "2d ago"},
+		{"bad format", "not-a-date", "not-a-date"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatTimeAgo(tc.ts)
+			if got != tc.want {
+				t.Errorf("formatTimeAgo = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatDateShort
+// ---------------------------------------------------------------------------
+
+func TestFormatDateShort(t *testing.T) {
+	got := formatDateShort("2026-04-10T12:30:00Z")
+	if got != "2026-04-10 12:30Z" {
+		t.Errorf("got %q", got)
+	}
+	got = formatDateShort("invalid")
+	if got != "invalid" {
+		t.Errorf("fallback = %q, want 'invalid'", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// outcomeSigmaPill
+// ---------------------------------------------------------------------------
+
+func TestOutcomeSigmaPill(t *testing.T) {
+	cases := []struct {
+		sigma float64
+		pct   float64
+		want  string
+	}{
+		{0.3, 5, "stable"},
+		{-0.3, 5, "stable"},
+		{2.0, 25, "out-pill-up"},
+		{-1.5, 15, "out-pill-down"},
+	}
+	for _, tc := range cases {
+		got := string(outcomeSigmaPill(tc.sigma, tc.pct))
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("outcomeSigmaPill(%v, %v) = %q, want to contain %q", tc.sigma, tc.pct, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// perfSigmaPill
+// ---------------------------------------------------------------------------
+
+func TestPerfSigmaPill(t *testing.T) {
+	cases := []struct {
+		sigma float64
+		want  string
+	}{
+		{0.3, "perf-pill-stable"},
+		{2.0, "perf-pill-slower"},
+		{-1.5, "perf-pill-faster"},
+	}
+	for _, tc := range cases {
+		got := string(perfSigmaPill(tc.sigma))
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("perfSigmaPill(%v) = %q, want to contain %q", tc.sigma, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fmtMs
+// ---------------------------------------------------------------------------
+
+func TestFmtMs(t *testing.T) {
+	cases := []struct {
+		ms   float64
+		want string
+	}{
+		{50, "50ms"},
+		{999, "999ms"},
+		{1000, "1.00s"},
+		{2500, "2.50s"},
+	}
+	for _, tc := range cases {
+		got := fmtMs(tc.ms)
+		if got != tc.want {
+			t.Errorf("fmtMs(%v) = %q, want %q", tc.ms, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// driftLabel
+// ---------------------------------------------------------------------------
+
+func TestDriftLabel(t *testing.T) {
+	cases := []struct {
+		pct       float64
+		wantLabel string
+		wantClass string
+	}{
+		{0.5, "flat", "drift-flat"},
+		{10, "↑ 10%", "drift-up"},
+		{-15, "↓ 15%", "drift-down"},
+	}
+	for _, tc := range cases {
+		label, class := driftLabel(tc.pct)
+		if label != tc.wantLabel {
+			t.Errorf("driftLabel(%v) label = %q, want %q", tc.pct, label, tc.wantLabel)
+		}
+		if class != tc.wantClass {
+			t.Errorf("driftLabel(%v) class = %q, want %q", tc.pct, class, tc.wantClass)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sigmaDriftLabel
+// ---------------------------------------------------------------------------
+
+func TestSigmaDriftLabel(t *testing.T) {
+	cases := []struct {
+		sigma     float64
+		wantLabel string
+		wantClass string
+	}{
+		{0.5, "stable", "drift-flat"},
+		{2.0, "2.0σ slower", "drift-up"},
+		{-2.0, "2.0σ faster", "drift-down"},
+	}
+	for _, tc := range cases {
+		label, class := sigmaDriftLabel(tc.sigma)
+		if label != tc.wantLabel {
+			t.Errorf("sigmaDriftLabel(%v) label = %q, want %q", tc.sigma, label, tc.wantLabel)
+		}
+		if class != tc.wantClass {
+			t.Errorf("sigmaDriftLabel(%v) class = %q, want %q", tc.sigma, class, tc.wantClass)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatDrift
+// ---------------------------------------------------------------------------
+
+func TestFormatDrift(t *testing.T) {
+	cases := []struct {
+		pct  float64
+		want string
+	}{
+		{0.5, "flat"},
+		{25, "↑ 25%"},
+		{-10, "↓ 10%"},
+	}
+	for _, tc := range cases {
+		got := formatDrift(tc.pct)
+		if got != tc.want {
+			t.Errorf("formatDrift(%v) = %q, want %q", tc.pct, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// linkForAnomaly
+// ---------------------------------------------------------------------------
+
+func TestLinkForAnomaly(t *testing.T) {
+	cases := []struct {
+		kind string
+		name string
+		want string
+	}{
+		{"perf", "GET /items", "/performance/GET%20%2Fitems"},
+		{"error", "RuntimeError", "/errors"},
+		{"outcome", "signup.completed", "/outcomes/signup.completed"},
+		{"unknown", "x", ""},
+	}
+	for _, tc := range cases {
+		got := linkForAnomaly(reads.AnomalyEntry{MetricKind: tc.kind, Name: tc.name})
+		if got != tc.want {
+			t.Errorf("linkForAnomaly(%q, %q) = %q, want %q", tc.kind, tc.name, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// toAnomalyCard
+// ---------------------------------------------------------------------------
+
+func TestToAnomalyCard(t *testing.T) {
+	card := toAnomalyCard(reads.AnomalyEntry{
+		ID: 1, AnomalyKind: "dimension_spike", MetricKind: "outcome",
+		Name: "signup", Dimension: map[string]any{"plan": "pro"},
+		Current: 50, BaselineMean: 10, DeviationSigma: 5.0,
+		Summary: "test summary", FirstDetected: "2026-04-10T12:00:00Z",
+	})
+	if card.BadgeClass != "spike" {
+		t.Errorf("badge = %q, want spike", card.BadgeClass)
+	}
+	if card.Dimension != "plan=pro" {
+		t.Errorf("dimension = %q", card.Dimension)
+	}
+	if card.Sigma != "5.0σ" {
+		t.Errorf("sigma = %q", card.Sigma)
+	}
+
+	card2 := toAnomalyCard(reads.AnomalyEntry{
+		AnomalyKind: "volume_shift", MetricKind: "perf", Name: "GET /x",
+	})
+	if card2.BadgeClass != "shift" {
+		t.Errorf("badge = %q, want shift", card2.BadgeClass)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleDismissAnomaly
+// ---------------------------------------------------------------------------
+
+func TestDismissAnomaly_dashboard(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindAmbient, Name: "test",
+		PeriodKind: beacondb.PeriodAnomaly, PeriodWindow: "24h",
+		PeriodStart: fixedNow.Add(-1 * time.Hour),
+		Count: 10, Sum: fp(5.0), P50: fp(10), P95: fp(1),
+		Fingerprint: "volume_shift",
+	}})
+
+	rows, _ := fake.ListMetrics(ctx, beacondb.MetricFilter{PeriodKind: beacondb.PeriodAnomaly})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/anomalies/%d/dismiss", rows[0].ID), nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", rec.Code)
+	}
+
+	// Already dismissed.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/anomalies/%d/dismiss", rows[0].ID), nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+
+	// Bad ID.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/anomalies/notanumber/dismiss", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// safeDeref
+// ---------------------------------------------------------------------------
+
+func TestSafeDeref(t *testing.T) {
+	v := 3.14
+	if got := safeDeref(&v); got != 3.14 {
+		t.Errorf("got %v", got)
+	}
+	if got := safeDeref(nil); got != 0 {
+		t.Errorf("got %v, want 0", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// render with htmx partial
+// ---------------------------------------------------------------------------
+
+func TestOutcomesPage_htmxPartial(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/outcomes", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") {
+		t.Error("htmx partial should not contain full layout")
+	}
+}
+
+func TestPerformancePage_htmxPartial(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/performance", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestErrorsPage_htmxPartial(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/errors", nil)
+	req.Header.Set("HX-Request", "true")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// outcomes with list view
+// ---------------------------------------------------------------------------
+
+func TestOutcomesPage_listView(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/outcomes?list=1", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// mean helper
+// ---------------------------------------------------------------------------
+
+func TestMean(t *testing.T) {
+	if got := mean(nil); got != 0 {
+		t.Errorf("mean(nil) = %v", got)
+	}
+	if got := mean([]float64{10, 20, 30}); got != 20 {
+		t.Errorf("mean = %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildErrorRow
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// handleErrors with deploy events and filters
+// ---------------------------------------------------------------------------
+
+func TestErrorsPage_withDeployContext(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	// Seed a deploy event.
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context:   map[string]any{"deploy_sha": "deploy123"},
+		CreatedAt: fixedNow.Add(-1 * time.Hour),
+	}})
+
+	// Seed an error introduced in this deploy.
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "NewError", Fingerprint: "new-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart:         fixedNow.Add(-30 * time.Minute).Truncate(time.Hour),
+		Count:               3,
+		IntroducedDeploySHA: "deploy123",
+	}})
+
+	// Seed an older error that stopped before the deploy (resolved).
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "OldError", Fingerprint: "old-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart:         fixedNow.Add(-48 * time.Hour).Truncate(time.Hour),
+		Count:               5,
+		IntroducedDeploySHA: "old-sha",
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "NewError") {
+		t.Error("missing NewError")
+	}
+}
+
+func TestErrorsPage_filterNew(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "Recent", Fingerprint: "fp-recent",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-1 * time.Hour).Truncate(time.Hour),
+		Count:       1,
+	}})
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "Ancient", Fingerprint: "fp-ancient",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart: fixedNow.Add(-10 * 24 * time.Hour).Truncate(time.Hour),
+		Count:       1,
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors?filter=new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestErrorsPage_filterResolved(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context: map[string]any{"deploy_sha": "sha1"}, CreatedAt: fixedNow.Add(-1 * time.Hour),
+	}})
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "Resolved", Fingerprint: "fp-r",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart:         fixedNow.Add(-48 * time.Hour).Truncate(time.Hour),
+		Count:               2,
+		IntroducedDeploySHA: "old-sha",
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors?filter=resolved", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestErrorsPage_listView(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors?list=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handlePerformance with filters
+// ---------------------------------------------------------------------------
+
+func TestPerformancePage_filterSlower(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance?filter=slower", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPerformancePage_filterHttp(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance?filter=http", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPerformancePage_filterJobs(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	base := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 24; i++ {
+		p95 := 50.0
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "BackgroundJob",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       10, P95: &p95,
+		}})
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance?filter=jobs", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPerformancePage_listView(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance?list=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleOutcomes with filters
+// ---------------------------------------------------------------------------
+
+func TestOutcomesPage_filterAbove(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	seedTestData(t, fake)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/outcomes?filter=above", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleOutcomeDetail with deploy events
+// ---------------------------------------------------------------------------
+
+func TestOutcomeDetailPage_withDeploys(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	seedTestData(t, fake)
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context:   map[string]any{"deploy_sha": "abc1234"},
+		CreatedAt: fixedNow.Add(-12 * time.Hour),
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/outcomes/signup.completed", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// render: template not found path
+// ---------------------------------------------------------------------------
+
+func TestRender_missingTemplate(t *testing.T) {
+	d, _, mux := newTestDashboardWithFake(t, "")
+	_ = d
+	// We can't directly call render with a bad template name through the mux,
+	// but we can verify the error path by requesting a page that doesn't exist.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
+	mux.ServeHTTP(rec, req)
+	// Go's default mux returns 404 for unknown routes.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatValue (svg.go)
+// ---------------------------------------------------------------------------
+
+func TestFormatValue(t *testing.T) {
+	cases := []struct {
+		val  float64
+		want string
+	}{
+		{999, "999"},
+		{1500, "1.5K"},
+		{1000000, "1.0M"},
+		{0, "0"},
+		{3.14, "3.1"},
+	}
+	for _, tc := range cases {
+		got := formatValue(tc.val)
+		if got != tc.want {
+			t.Errorf("formatValue(%v) = %q, want %q", tc.val, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleErrorDetail: comprehensive with sample event
+// ---------------------------------------------------------------------------
+
+func TestErrorDetailPage_fullSampleEvent(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: "full-fp",
+		PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+		PeriodStart:         fixedNow.Add(-1 * time.Hour).Truncate(time.Hour),
+		Count:               3,
+		IntroducedDeploySHA: "abcdef1234567890deadbeef",
+	}})
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: "full-fp",
+		Properties: map[string]any{
+			"message":         "undefined method 'save'",
+			"first_app_frame": "app/models/order.rb:42",
+			"stack_trace":     "app/models/order.rb:42:in `save'\n/gems/activerecord/base.rb:10",
+			"path":            "POST /orders",
+		},
+		Context: map[string]any{
+			"deploy_sha":  "abcdef12",
+			"environment": "production",
+			"request_id":  "req-999",
+		},
+		CreatedAt: fixedNow.Add(-30 * time.Minute),
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors/full-fp", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "RuntimeError") {
+		t.Error("missing error name")
+	}
+	if !strings.Contains(body, "production") {
+		t.Error("missing environment")
+	}
+	if !strings.Contains(body, "req-999") {
+		t.Error("missing request_id")
+	}
+}
+
+func TestErrorDetailPage_notFound(t *testing.T) {
+	_, _, mux := newTestDashboardWithFake(t, "")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/errors/nonexistent", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (error page still renders)", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handlePerformanceDetail: with deploy events
+// ---------------------------------------------------------------------------
+
+func TestPerformanceDetailPage_withDeploys(t *testing.T) {
+	_, fake, mux := newTestDashboardWithFake(t, "")
+	ctx := context.Background()
+
+	base := fixedNow.Add(-24 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 24; i++ {
+		p95 := 150.0
+		_ = fake.UpsertMetrics(ctx, []beacondb.Metric{{
+			Kind: beacondb.KindPerf, Name: "GET /api/items",
+			PeriodKind: beacondb.PeriodHour, PeriodWindow: "hour",
+			PeriodStart: base.Add(time.Duration(i) * time.Hour),
+			Count:       50, P95: &p95,
+		}})
+	}
+
+	_, _ = fake.InsertEvents(ctx, []beacondb.Event{{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context:   map[string]any{"deploy_sha": "deploy-sha"},
+		CreatedAt: fixedNow.Add(-12 * time.Hour),
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performance/GET%20/api/items", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestBuildErrorRow(t *testing.T) {
+	summary := reads.ErrorSummary{
+		Name:                "NoMethodError",
+		Fingerprint:         "abcdef1234567890",
+		Occurrences:         42,
+		IntroducedDeploySHA: "deadbeef12345678",
+		Trend:               "increasing",
+		LastSeen:            "2026-04-10T10:00:00Z",
+		FirstSeen:           "2026-04-09T10:00:00Z",
+		HourlyCounts:        []int64{1, 2, 3},
+	}
+	row := buildErrorRow(summary, "new")
+	if row.FPShort != "abcdef123456" {
+		t.Errorf("FPShort = %q", row.FPShort)
+	}
+	if row.DeploySHA != "deadbeef" {
+		t.Errorf("DeploySHA = %q", row.DeploySHA)
+	}
+	if row.TrendIcon != "↑" {
+		t.Errorf("TrendIcon = %q", row.TrendIcon)
+	}
+	if row.TrendClass != "ed-trend-up" {
+		t.Errorf("TrendClass = %q", row.TrendClass)
+	}
+	if row.Sparkline == "" {
+		t.Error("sparkline should be non-empty with hourly data")
 	}
 }

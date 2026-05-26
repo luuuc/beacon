@@ -129,11 +129,15 @@ type ErrorsResponse struct {
 }
 
 type ErrorSummary struct {
-	Name        string `json:"name"`
-	Fingerprint string `json:"fingerprint"`
-	FirstSeen   string `json:"first_seen"`
-	LastSeen    string `json:"last_seen"`
-	Occurrences int64  `json:"occurrences"`
+	Name                string  `json:"name"`
+	Message             string  `json:"message,omitempty"`
+	Fingerprint         string  `json:"fingerprint"`
+	FirstSeen           string  `json:"first_seen"`
+	LastSeen            string  `json:"last_seen"`
+	Occurrences         int64   `json:"occurrences"`
+	IntroducedDeploySHA string  `json:"introduced_deploy_sha,omitempty"`
+	Trend               string  `json:"trend,omitempty"`
+	HourlyCounts        []int64 `json:"hourly_counts,omitempty"`
 }
 
 // ErrorDetailResponse is the investigation payload for a single error
@@ -170,12 +174,13 @@ type PerfResponse struct {
 }
 
 type PerfEndpoint struct {
-	Name           string  `json:"name"`
-	CurrentP95     float64 `json:"current_p95"`
-	BaselineP95    float64 `json:"baseline_p95"`
-	BaselineStddev float64 `json:"baseline_stddev"`
-	DriftSigmas    float64 `json:"drift_sigmas"`
-	RequestCount   int64   `json:"request_count"`
+	Name           string    `json:"name"`
+	CurrentP95     float64   `json:"current_p95"`
+	BaselineP95    float64   `json:"baseline_p95"`
+	BaselineStddev float64   `json:"baseline_stddev"`
+	DriftSigmas    float64   `json:"drift_sigmas"`
+	RequestCount   int64     `json:"request_count"`
+	HourlyP95      []float64 `json:"-"` // recent hourly P95 for sparklines
 }
 
 type DeployBaselineResponse struct {
@@ -437,13 +442,19 @@ func (h *Handler) GetErrors(ctx context.Context, req GetErrorsRequest) (*ErrorsR
 		name, fingerprint string
 		first, last       time.Time
 		occurrences       int64
+		introDeploySHA    string
+		buckets           map[time.Time]int64
 	}
 	groups := map[groupKey]*acc{}
 	for _, m := range hourlies {
 		gk := groupKey{name: m.Name, fingerprint: m.Fingerprint}
 		a, ok := groups[gk]
 		if !ok {
-			a = &acc{name: m.Name, fingerprint: m.Fingerprint, first: m.PeriodStart, last: m.PeriodStart}
+			a = &acc{
+				name: m.Name, fingerprint: m.Fingerprint,
+				first: m.PeriodStart, last: m.PeriodStart,
+				buckets: map[time.Time]int64{},
+			}
 			groups[gk] = a
 		}
 		if m.PeriodStart.Before(a.first) {
@@ -453,6 +464,10 @@ func (h *Handler) GetErrors(ctx context.Context, req GetErrorsRequest) (*ErrorsR
 			a.last = m.PeriodStart
 		}
 		a.occurrences += m.Count
+		a.buckets[m.PeriodStart.Truncate(time.Hour)] += m.Count
+		if a.introDeploySHA == "" && m.IntroducedDeploySHA != "" {
+			a.introDeploySHA = m.IntroducedDeploySHA
+		}
 	}
 
 	if req.NewOnly {
@@ -476,18 +491,83 @@ func (h *Handler) GetErrors(ctx context.Context, req GetErrorsRequest) (*ErrorsR
 		groups = filtered
 	}
 
+	// Build a common 24h bucket timeline (last 24 hours).
+	hourNow := now.Truncate(time.Hour)
+	const bucketCount = 24
+
 	out := make([]ErrorSummary, 0, len(groups))
 	for _, a := range groups {
+		hourly := make([]int64, bucketCount)
+		for i := range hourly {
+			t := hourNow.Add(time.Duration(i-bucketCount+1) * time.Hour)
+			hourly[i] = a.buckets[t]
+		}
+		trend := classifyTrend(hourly)
+
 		out = append(out, ErrorSummary{
-			Name:        a.name,
-			Fingerprint: a.fingerprint,
-			FirstSeen:   a.first.UTC().Format(time.RFC3339),
-			LastSeen:    a.last.UTC().Format(time.RFC3339),
-			Occurrences: a.occurrences,
+			Name:                a.name,
+			Fingerprint:         a.fingerprint,
+			FirstSeen:           a.first.UTC().Format(time.RFC3339),
+			LastSeen:            a.last.UTC().Format(time.RFC3339),
+			Occurrences:         a.occurrences,
+			IntroducedDeploySHA: a.introDeploySHA,
+			Trend:               trend,
+			HourlyCounts:        hourly,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FirstSeen > out[j].FirstSeen })
+
+	// Fetch messages from recent events.
+	recentEvents, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:  beacondb.KindError,
+		Since: now.Add(-24 * time.Hour),
+	})
+	if err == nil {
+		msgByFP := map[string]string{}
+		for _, ev := range recentEvents {
+			if _, ok := msgByFP[ev.Fingerprint]; ok {
+				continue
+			}
+			if msg, _ := ev.Properties["message"].(string); msg != "" {
+				msgByFP[ev.Fingerprint] = msg
+			}
+		}
+		for i := range out {
+			out[i].Message = msgByFP[out[i].Fingerprint]
+		}
+	}
+
 	return &ErrorsResponse{Errors: out}, nil
+}
+
+// classifyTrend compares the second half of a series to the first half.
+func classifyTrend(counts []int64) string {
+	if len(counts) < 2 {
+		return "stable"
+	}
+	mid := len(counts) / 2
+	var first, second int64
+	for _, c := range counts[:mid] {
+		first += c
+	}
+	for _, c := range counts[mid:] {
+		second += c
+	}
+	if first == 0 && second == 0 {
+		return "stable"
+	}
+	if first == 0 {
+		return "increasing"
+	}
+	ratio := float64(second) / float64(first)
+	switch {
+	case ratio > 1.25:
+		return "increasing"
+	case ratio < 0.75:
+		return "decreasing"
+	default:
+		return "stable"
+	}
 }
 
 func (h *Handler) handleErrors(w http.ResponseWriter, r *http.Request) {
@@ -633,6 +713,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 	type nameAcc struct {
 		current, baseline []float64
 		currentCount      int64
+		currentBuckets    map[time.Time]float64
 	}
 	byName := map[string]*nameAcc{}
 	for _, m := range allRows {
@@ -641,7 +722,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 		}
 		a, ok := byName[m.Name]
 		if !ok {
-			a = &nameAcc{}
+			a = &nameAcc{currentBuckets: map[time.Time]float64{}}
 			byName[m.Name] = a
 		}
 		if m.PeriodStart.Before(currentCutoff) {
@@ -649,8 +730,13 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 		} else {
 			a.current = append(a.current, *m.P95)
 			a.currentCount += m.Count
+			a.currentBuckets[m.PeriodStart.Truncate(time.Hour)] = *m.P95
 		}
 	}
+
+	// Build a 24-bucket sparkline timeline for each endpoint.
+	hourNow := now.Truncate(time.Hour)
+	const perfBucketCount = 24
 
 	out := make([]PerfEndpoint, 0, len(byName))
 	for name, a := range byName {
@@ -666,6 +752,11 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 		if req.DriftOnly && math.Abs(drift) < 1 {
 			continue
 		}
+		hourlyP95 := make([]float64, perfBucketCount)
+		for i := range hourlyP95 {
+			t := hourNow.Add(time.Duration(i-perfBucketCount+1) * time.Hour)
+			hourlyP95[i] = a.currentBuckets[t]
+		}
 		out = append(out, PerfEndpoint{
 			Name:           name,
 			CurrentP95:     roundTo(curMean, 2),
@@ -673,6 +764,7 @@ func (h *Handler) GetPerfEndpoints(ctx context.Context, req GetPerfRequest) (*Pe
 			BaselineStddev: roundTo(bStddev, 2),
 			DriftSigmas:    roundTo(drift, 2),
 			RequestCount:   a.currentCount,
+			HourlyP95:      hourlyP95,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -802,10 +894,13 @@ func (h *Handler) GetRecentErrorEvents(ctx context.Context, fingerprint string, 
 // OutcomeSummary is one outcome metric's recent activity and baseline drift.
 type OutcomeSummary struct {
 	Name           string    `json:"name"`
+	Description    string    `json:"description,omitempty"`
 	DailyCount     int64     `json:"daily_count"`
 	HourlyCounts   []float64 `json:"-"` // raw hourly series for sparklines
 	DriftPercent   float64   `json:"drift_percent"`   // vs 30d baseline mean
 	BaselineMean   float64   `json:"baseline_mean"`
+	BaselineStddev float64   `json:"baseline_stddev"`
+	Sigma          float64   `json:"sigma"` // (current_mean - baseline_mean) / baseline_stddev
 }
 
 // GetOutcomeSummaries lists all outcome metrics active in the window,
@@ -830,46 +925,84 @@ func (h *Handler) GetOutcomeSummaries(ctx context.Context, window time.Duration)
 
 	type acc struct {
 		total   int64
-		hourly  []float64
+		buckets map[time.Time]int64
 	}
 	byName := map[string]*acc{}
 	for _, m := range hourlies {
 		a, ok := byName[m.Name]
 		if !ok {
-			a = &acc{}
+			a = &acc{buckets: map[time.Time]int64{}}
 			byName[m.Name] = a
 		}
 		a.total += m.Count
-		a.hourly = append(a.hourly, float64(m.Count))
+		a.buckets[m.PeriodStart.Truncate(time.Hour)] += m.Count
 	}
+
+	// Build a common bucketed timeline for sparklines (last 24h, hourly).
+	hourNow := now.Truncate(time.Hour)
+	const bucketCount = 24
+
+	descriptions := h.outcomeDescriptions(ctx, since, now)
 
 	out := make([]OutcomeSummary, 0, len(byName))
 	for name, a := range byName {
+		// Build a 24-bucket sparkline timeline (zero-filled).
+		hourly := make([]float64, bucketCount)
+		for i := range hourly {
+			t := hourNow.Add(time.Duration(i-bucketCount+1) * time.Hour)
+			hourly[i] = float64(a.buckets[t])
+		}
+
 		baseline, _ := h.buildBaselineSummary(ctx, beacondb.KindOutcome, name, now)
-		var drift float64
-		var bMean float64
+		var drift, bMean, bStd, sigma float64
 		if baseline != nil && baseline.HourlyCountMean > 0 {
 			bMean = baseline.HourlyCountMean
-			currentMean := mean(a.hourly)
+			bStd = baseline.HourlyCountStd
+			currentMean := mean(hourly)
 			drift = ((currentMean - bMean) / bMean) * 100
+			if bStd > 0 {
+				sigma = (currentMean - bMean) / bStd
+			}
 		}
 		out = append(out, OutcomeSummary{
-			Name:         name,
-			DailyCount:   a.total,
-			HourlyCounts: a.hourly,
-			DriftPercent: roundTo(drift, 1),
-			BaselineMean: roundTo(bMean, 2),
+			Name:           name,
+			Description:    descriptions[name],
+			DailyCount:     a.total,
+			HourlyCounts:   hourly,
+			DriftPercent:   roundTo(drift, 1),
+			BaselineMean:   roundTo(bMean, 2),
+			BaselineStddev: roundTo(bStd, 2),
+			Sigma:          roundTo(sigma, 1),
 		})
 	}
-	// Sort by absolute drift weighted by volume: a 10% drop on 1000/day
-	// outranks a 50% drop on 2/day. Falls back to percentage when counts
-	// are equal (e.g. both zero).
+	// Sort by |σ| descending so biggest deviations surface first.
 	sort.Slice(out, func(i, j int) bool {
-		ai := math.Abs(out[i].DriftPercent) * float64(out[i].DailyCount)
-		aj := math.Abs(out[j].DriftPercent) * float64(out[j].DailyCount)
-		return ai > aj
+		return math.Abs(out[i].Sigma) > math.Abs(out[j].Sigma)
 	})
 	return out, nil
+}
+
+// outcomeDescriptions fetches recent outcome events and extracts the
+// "description" property per tag name. Returns an empty map on error.
+func (h *Handler) outcomeDescriptions(ctx context.Context, since, until time.Time) map[string]string {
+	events, err := h.adapter.ListEvents(ctx, beacondb.EventFilter{
+		Kind:  beacondb.KindOutcome,
+		Since: since,
+		Until: until,
+	})
+	if err != nil {
+		return nil
+	}
+	descs := map[string]string{}
+	for _, e := range events {
+		if _, ok := descs[e.Name]; ok {
+			continue
+		}
+		if d, _ := e.Properties["description"].(string); d != "" {
+			descs[e.Name] = d
+		}
+	}
+	return descs
 }
 
 // ---------------------------------------------------------------------------

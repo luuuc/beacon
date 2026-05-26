@@ -1,11 +1,64 @@
-{{define "outcomes-cards"}}
-<div id="outcomes-cards" hx-get="/outcomes" hx-trigger="every 30s" hx-swap="innerHTML">
-  {{if .Metrics}}
-  <div class="card-grid">
-    {{range .Metrics}}
+{{define "outcomes-list"}}
+<div id="outcomes-list">
+  {{if .Rows}}
+  <div class="ol-list">
+    <div class="ol-list-head">
+      <span>Tag</span>
+      <span class="ol-h-spark">Trend · 7d</span>
+      <span class="ol-h-num">Per day</span>
+      <span class="ol-h-base">Baseline</span>
+      <span class="ol-h-delta">Δ vs baseline</span>
+    </div>
+    {{range .Rows}}
     {{template "outcome_card.html" .}}
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No outcomes match this filter.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "outcomes-cards"}}
+<div id="outcomes-cards" hx-get="/outcomes" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if or .Rows (gt .Stats.Total 0)}}
+  {{/* Summary strip */}}
+  <div class="ol-summary">
+    <div class="ol-stat">
+      <span class="meta-label">Tracked tags</span>
+      <div class="ol-stat-num mono">{{.Stats.Total}}</div>
+      <div class="ol-stat-sub mono">product events</div>
+    </div>
+    <div class="ol-stat">
+      <span class="meta-label">Events (24h)</span>
+      <div class="ol-stat-num mono">{{.Stats.Events24}}</div>
+      <div class="ol-stat-sub mono">across all tags</div>
+    </div>
+    <div class="ol-stat">
+      <span class="meta-label">Above baseline</span>
+      <div class="ol-stat-num mono out-up">{{.Stats.Above}}</div>
+      <div class="ol-stat-sub mono">&gt; 0.5σ above</div>
+    </div>
+    <div class="ol-stat">
+      <span class="meta-label">Below baseline</span>
+      <div class="ol-stat-num mono out-down">{{.Stats.Below}}</div>
+      <div class="ol-stat-sub mono">&gt; 0.5σ below</div>
+    </div>
+  </div>
+
+  {{/* Filter chips */}}
+  <div class="ol-filters">
+    <div class="ol-chips">
+      <button class="ol-chip{{if or (eq .Filter "") (eq .Filter "all")}} ol-chip-active{{end}}" hx-get="/outcomes?filter=all&list=1" hx-target="#outcomes-list" hx-swap="outerHTML">All <span class="ol-chip-c mono">{{.Stats.Total}}</span></button>
+      <button class="ol-chip{{if eq .Filter "above"}} ol-chip-active{{end}}" hx-get="/outcomes?filter=above&list=1" hx-target="#outcomes-list" hx-swap="outerHTML">Above <span class="ol-chip-c mono">{{.Stats.Above}}</span></button>
+      <button class="ol-chip{{if eq .Filter "stable"}} ol-chip-active{{end}}" hx-get="/outcomes?filter=stable&list=1" hx-target="#outcomes-list" hx-swap="outerHTML">Stable <span class="ol-chip-c mono">{{.Stats.Flat}}</span></button>
+      <button class="ol-chip{{if eq .Filter "below"}} ol-chip-active{{end}}" hx-get="/outcomes?filter=below&list=1" hx-target="#outcomes-list" hx-swap="outerHTML">Below <span class="ol-chip-c mono">{{.Stats.Below}}</span></button>
+    </div>
+  </div>
+
+  {{/* List */}}
+  {{template "outcomes-list" .}}
   {{else}}
   <div class="empty-state">
     <p>No outcome metrics yet.</p>
@@ -14,8 +67,12 @@
 </div>
 {{end}}
 {{define "content"}}
-<h1>Outcomes</h1>
-<p class="subtitle">Did the feature work?</p>
-{{template "outcomes-cards" .}}
+<div class="ol-page">
+  <div class="ol-header">
+    <h1 class="ol-title">Outcomes</h1>
+    <div class="ol-subtitle">Did the feature work?</div>
+  </div>
+  {{template "outcomes-cards" .}}
+</div>
 {{end}}
 {{define "outcomes.html"}}{{template "layout.html" .}}{{end}}

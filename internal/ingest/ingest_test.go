@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -714,6 +715,116 @@ func TestStatsEndpoint(t *testing.T) {
 	patterns, ok := stats["filter_patterns"].([]any)
 	if !ok || len(patterns) == 0 {
 		t.Errorf("filter_patterns = %v, want non-empty", stats["filter_patterns"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractInt32 edge cases
+// ---------------------------------------------------------------------------
+
+func TestExtractInt32(t *testing.T) {
+	cases := []struct {
+		name    string
+		props   map[string]any
+		key     string
+		want    int32
+		wantOK  bool
+		wantErr bool
+	}{
+		{"nil props", nil, "x", 0, false, false},
+		{"missing key", map[string]any{"a": 1}, "x", 0, false, false},
+		{"float64 integer", map[string]any{"x": float64(42)}, "x", 42, true, false},
+		{"float64 negative", map[string]any{"x": float64(-1)}, "x", -1, true, false},
+		{"int type", map[string]any{"x": int(99)}, "x", 99, true, false},
+		{"int32 type", map[string]any{"x": int32(7)}, "x", 7, true, false},
+		{"int64 type", map[string]any{"x": int64(123)}, "x", 123, true, false},
+		{"json.Number", map[string]any{"x": json.Number("500")}, "x", 500, true, false},
+		{"float64 NaN", map[string]any{"x": math.NaN()}, "x", 0, true, true},
+		{"float64 Inf", map[string]any{"x": math.Inf(1)}, "x", 0, true, true},
+		{"float64 fractional", map[string]any{"x": 3.14}, "x", 0, true, true},
+		{"overflow", map[string]any{"x": float64(3_000_000_000)}, "x", 0, true, true},
+		{"underflow", map[string]any{"x": float64(-3_000_000_000)}, "x", 0, true, true},
+		{"wrong type", map[string]any{"x": "not a number"}, "x", 0, true, true},
+		{"json.Number bad", map[string]any{"x": json.Number("abc")}, "x", 0, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok, err := extractInt32(tc.props, tc.key)
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if tc.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractPath
+// ---------------------------------------------------------------------------
+
+func TestExtractPath(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"GET /items/123", "/items/123"},
+		{"POST /api/events", "/api/events"},
+		{"nospaces", "nospaces"},
+	}
+	for _, tc := range cases {
+		got := extractPath(tc.input)
+		if got != tc.want {
+			t.Errorf("extractPath(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FilterPatterns nil filter
+// ---------------------------------------------------------------------------
+
+func TestFilterPatterns_nilFilter(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	if pats := h.FilterPatterns(); pats != nil {
+		t.Errorf("expected nil, got %v", pats)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StatsHandler with auth
+// ---------------------------------------------------------------------------
+
+func TestStatsEndpoint_requiresAuth(t *testing.T) {
+	fake := memfake.New()
+	if err := fake.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(Config{AuthToken: "secret"}, fake, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	h.StatsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	h.StatsHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -469,6 +470,278 @@ func TestToolErrorDetail_notFound(t *testing.T) {
 	m := resp.Result.(map[string]any)
 	if isErr, _ := m["isError"].(bool); !isErr {
 		t.Errorf("expected isError=true, got %+v", m)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Error paths for tool argument parsing
+// ---------------------------------------------------------------------------
+
+func TestToolCompare_badKind(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.compare",
+		"arguments": map[string]any{
+			"kind":        "banana",
+			"name":        "x",
+			"deploy_time": fixedNow.Format(time.RFC3339),
+		},
+	})
+	if resp.Error != nil {
+		t.Fatalf("expected tool error, got rpc: %+v", resp.Error)
+	}
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad kind")
+	}
+}
+
+func TestToolCompare_emptyName(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.compare",
+		"arguments": map[string]any{
+			"kind":        "outcome",
+			"name":        "",
+			"deploy_time": fixedNow.Format(time.RFC3339),
+		},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for empty name")
+	}
+}
+
+func TestToolCompare_badDeployTime(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.compare",
+		"arguments": map[string]any{
+			"kind":        "outcome",
+			"name":        "x",
+			"deploy_time": "not-a-time",
+		},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad deploy_time")
+	}
+}
+
+func TestToolOutcomeCheck_emptyName(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.outcome_check",
+		"arguments": map[string]any{
+			"name":        "",
+			"deploy_time": fixedNow.Format(time.RFC3339),
+		},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for empty name")
+	}
+}
+
+func TestToolOutcomeCheck_badDeployTime(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.outcome_check",
+		"arguments": map[string]any{
+			"name":        "x",
+			"deploy_time": "invalid",
+		},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad deploy_time")
+	}
+}
+
+func TestToolErrors_badWindow(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.errors",
+		"arguments": map[string]any{"since": "bogus"},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad window")
+	}
+}
+
+func TestToolPerfDrift_badWindow(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.perf_drift",
+		"arguments": map[string]any{"window": "bogus"},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad window")
+	}
+}
+
+func TestToolAnomalies_badWindow(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.anomalies",
+		"arguments": map[string]any{"since": "bogus"},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad window")
+	}
+}
+
+func TestToolMetric_badWindow(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name": "beacon.metric",
+		"arguments": map[string]any{
+			"kind":   "outcome",
+			"name":   "x",
+			"window": "bogus",
+		},
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError=true for bad window")
+	}
+}
+
+func TestToolDeployBaseline_happyPath(t *testing.T) {
+	srv, fake := newTestStack(t)
+	_ = fake.UpsertMetrics(context.Background(), []beacondb.Metric{{
+		Kind: beacondb.KindPerf, Name: "GET /items",
+		PeriodKind: beacondb.PeriodBaseline, PeriodWindow: "deploy",
+		PeriodStart: fixedNow.Add(-1 * time.Hour), Count: 300,
+	}})
+
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.deploy_baseline",
+		"arguments": map[string]any{"kind": "perf", "name": "GET /items"},
+	})
+	var viaMCP reads.DeployBaselineResponse
+	toolResultText(t, resp, &viaMCP)
+	if viaMCP.Count != 300 {
+		t.Errorf("count = %d, want 300", viaMCP.Count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleRPC: malformed JSON
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Malformed tool arguments
+// ---------------------------------------------------------------------------
+
+func TestToolMetric_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.metric",
+		"arguments": "not-json-object",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError for bad arguments")
+	}
+}
+
+func TestToolErrors_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.errors",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolErrorDetail_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.error_detail",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolPerfDrift_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.perf_drift",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolCompare_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.compare",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolOutcomeCheck_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.outcome_check",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolDeployBaseline_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.deploy_baseline",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestToolAnomalies_badArguments(t *testing.T) {
+	srv, _ := newTestStack(t)
+	resp, _ := rpcCall(t, srv, "tools/call", map[string]any{
+		"name":      "beacon.anomalies",
+		"arguments": "bad",
+	})
+	m := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Error("expected isError")
+	}
+}
+
+func TestHandleRPC_malformedJSON(t *testing.T) {
+	srv, _ := newTestStack(t)
+	req := httptest.NewRequest(http.MethodPost, "/rpc", strings.NewReader("{bad"))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	var resp rpcResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error == nil {
+		t.Fatal("expected error for malformed JSON")
 	}
 }
 

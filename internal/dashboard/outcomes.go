@@ -10,15 +10,25 @@ import (
 
 	"github.com/luuuc/beacon/internal/beacondb"
 	"github.com/luuuc/beacon/internal/reads"
-	"github.com/luuuc/beacon/internal/rollup"
 )
 
-type outcomeCardData struct {
-	Name       string
-	Sparkline  template.HTML
-	Count      string // e.g. "142/day"
-	Drift      string
-	DriftClass string
+type outcomeRowData struct {
+	Name         string
+	Description  string
+	Sparkline    template.HTML
+	PerDay       int64
+	BaselineMean string // formatted "X.X/day"
+	Sigma        float64
+	SigmaPct     string // formatted "+X%" or "-X%"
+	SigmaPill    template.HTML
+}
+
+type outcomeSummaryStats struct {
+	Total    int
+	Events24 int64
+	Above    int
+	Below    int
+	Flat     int
 }
 
 func (d *Dashboard) handleOutcomes(w http.ResponseWriter, r *http.Request) {
@@ -30,37 +40,95 @@ func (d *Dashboard) handleOutcomes(w http.ResponseWriter, r *http.Request) {
 		d.log.Error("outcomes query", "err", err)
 	}
 
-	// Fetch deploy events for sparkline markers.
-	now := d.reads.Now().UTC()
-	deploys, err := d.reads.GetDeployEvents(ctx, now.Add(-window), now)
-	if err != nil {
-		d.log.Error("deploy events query", "err", err)
-	}
-
 	days := int(window / (24 * time.Hour))
-	var cards []outcomeCardData
+
+	var (
+		rows  []outcomeRowData
+		stats outcomeSummaryStats
+	)
+	filter := r.URL.Query().Get("filter")
+
+	stats.Total = len(summaries)
 	for _, s := range summaries {
-		drift, cls := driftLabel(s.DriftPercent)
-
-		// Map deploy timestamps to sparkline indices.
-		nPts := len(s.HourlyCounts)
-		deployIdx := sparklineDeployIndices(deploys, now.Add(-window), now, nPts)
-
 		dailyAvg := s.DailyCount / int64(max(1, days))
-		cards = append(cards, outcomeCardData{
-			Name:       s.Name,
-			Sparkline:  SparklineSVG(s.HourlyCounts, 200, 32, deployIdx...),
-			Count:      fmt.Sprintf("%d/day", dailyAvg),
-			Drift:      drift,
-			DriftClass: cls,
+		stats.Events24 += dailyAvg
+
+		category := "stable"
+		switch {
+		case s.Sigma > 0.5:
+			stats.Above++
+			category = "above"
+		case s.Sigma < -0.5:
+			stats.Below++
+			category = "below"
+		default:
+			stats.Flat++
+		}
+
+		if filter != "" && filter != "all" && filter != category {
+			continue
+		}
+
+		sparkOpts := SparklineOptions{}
+		absSigma := math.Abs(s.Sigma)
+		if absSigma >= 0.5 {
+			if s.Sigma > 0 {
+				sparkOpts.Stroke = "var(--accent)"
+				sparkOpts.Fill = "var(--accent-soft)"
+			} else {
+				sparkOpts.Stroke = "var(--warn)"
+				sparkOpts.Fill = "var(--warn-soft)"
+			}
+		} else {
+			sparkOpts.Stroke = "var(--text-3)"
+			sparkOpts.Fill = "var(--bg-sunken)"
+		}
+		spark := SparklineSVGStyled(s.HourlyCounts, 92, 26, sparkOpts)
+
+		pct := s.DriftPercent
+		var sigmaPct string
+		if pct > 0 {
+			sigmaPct = fmt.Sprintf("+%.0f%%", pct)
+		} else {
+			sigmaPct = fmt.Sprintf("%.0f%%", pct)
+		}
+
+		rows = append(rows, outcomeRowData{
+			Name:         s.Name,
+			Description:  s.Description,
+			Sparkline:    spark,
+			PerDay:       dailyAvg,
+			BaselineMean: fmt.Sprintf("%.1f/day", s.BaselineMean*24),
+			Sigma:        s.Sigma,
+			SigmaPct:     sigmaPct,
+			SigmaPill:    outcomeSigmaPill(s.Sigma, pct),
 		})
 	}
 
-	d.render(w, r, "outcomes.html", "outcomes-cards", pageData(map[string]any{
+	data := pageData(map[string]any{
 		"ActiveNav": "outcomes",
 		"Title":     "Outcomes",
-		"Metrics":   cards,
-	}))
+		"Rows":      rows,
+		"Stats":     stats,
+		"Filter":    filter,
+	})
+
+	if r.URL.Query().Get("list") == "1" {
+		d.render(w, r, "outcomes.html", "outcomes-list", data)
+		return
+	}
+	d.render(w, r, "outcomes.html", "outcomes-cards", data)
+}
+
+func outcomeSigmaPill(sigma, pct float64) template.HTML {
+	abs := math.Abs(sigma)
+	if abs < 0.5 {
+		return `<span class="out-pill-flat">stable</span>`
+	}
+	if sigma > 0 {
+		return template.HTML(fmt.Sprintf(`<span class="out-pill-up">↑ +%.0f%%</span>`, pct))
+	}
+	return template.HTML(fmt.Sprintf(`<span class="out-pill-down">↓ %.0f%%</span>`, pct))
 }
 
 func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +142,7 @@ func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		d.log.Error("outcome detail query", "name", name, "err", err)
-		d.render(w, r, "metric_detail.html", "", pageData(map[string]any{
+		d.render(w, r, "outcome_detail.html", "", pageData(map[string]any{
 			"ActiveNav": "outcomes",
 			"Title":     name,
 			"Name":      name,
@@ -82,31 +150,30 @@ func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Build chart data.
 	points := make([]ChartPoint, len(resp.Data))
+	var totalCount int64
 	for i, pt := range resp.Data {
 		points[i] = ChartPoint{Label: pt.PeriodStart, Value: float64(pt.Count)}
+		totalCount += pt.Count
 	}
 
-	var baseline *float64
-	var baselineStddev *float64
+	var baseline, baselineStddev *float64
+	var bMean, bStd float64
+	var capturedAt string
 	if resp.Baseline != nil && resp.Baseline.HourlyCountMean > 0 {
 		daily := resp.Baseline.HourlyCountMean * 24
 		baseline = &daily
 		dailyStd := resp.Baseline.HourlyCountStd * 24
 		baselineStddev = &dailyStd
+		bMean = resp.Baseline.HourlyCountMean
+		bStd = resp.Baseline.HourlyCountStd
+		capturedAt = resp.Baseline.CapturedAt
 	}
 
-	// Deploy markers on the chart.
 	now := d.reads.Now().UTC()
 	since := now.Add(-7 * 24 * time.Hour)
-	deploys, err := d.reads.GetDeployEvents(ctx, since, now)
-	if err != nil {
-		d.log.Error("deploy events query", "name", name, "err", err)
-	}
-
+	deploys, _ := d.reads.GetDeployEvents(ctx, since, now)
 	chartDeploys := chartDeployIndices(deploys, points)
-
 	var deployIndices []int
 	var deployLabels []string
 	for _, cd := range chartDeploys {
@@ -123,58 +190,43 @@ func (d *Dashboard) handleOutcomeDetail(w http.ResponseWriter, r *http.Request) 
 		DeployLabels:   deployLabels,
 	})
 
-	// Stats.
-	var stats []stat
-	var totalCount int64
-	for _, pt := range resp.Data {
-		totalCount += pt.Count
+	// Compute current per-period and sigma for the header pill.
+	var currentPerPeriod float64
+	if len(resp.Data) > 0 {
+		currentPerPeriod = float64(resp.Data[len(resp.Data)-1].Count)
 	}
-	stats = append(stats, stat{"Total (window)", fmt.Sprintf("%d", totalCount)})
-	stats = append(stats, stat{"Period", resp.PeriodKind})
-	if resp.Baseline != nil {
-		stats = append(stats, stat{"Baseline mean (hourly)", fmt.Sprintf("%.1f", resp.Baseline.HourlyCountMean)})
-		stats = append(stats, stat{"Baseline stddev", fmt.Sprintf("%.1f", resp.Baseline.HourlyCountStd)})
-		stats = append(stats, stat{"Baseline captured", resp.Baseline.CapturedAt})
+	var sigma float64
+	if bStd > 0 && baseline != nil {
+		sigma = (currentPerPeriod - *baseline) / *baselineStddev
 	}
-
-	// Last deploy context block.
-	var lastDeploy *deployContext
-	if len(deploys) > 0 {
-		latest := deploys[len(deploys)-1]
-		elapsed := now.Sub(latest.CreatedAt)
-		verdict := rollup.VerdictInsufficient
-		if resp.Baseline != nil && resp.Baseline.HourlyCountMean > 0 {
-			currentMean := float64(totalCount) / float64(max(1, len(resp.Data)))
-			dailyBaseline := resp.Baseline.HourlyCountMean * 24
-			verdict = rollup.CompareCount(int64(currentMean), int64(dailyBaseline))
-		}
-		lastDeploy = &deployContext{
-			SHA:     shortenSHA(latest.SHA),
-			Elapsed: formatElapsed(elapsed),
-			Verdict: string(verdict),
-		}
+	deltaPct := 0.0
+	if baseline != nil && *baseline > 0 {
+		deltaPct = ((currentPerPeriod - *baseline) / *baseline) * 100
 	}
 
-	d.render(w, r, "metric_detail.html", "", pageData(map[string]any{
-		"ActiveNav":  "outcomes",
-		"Title":      name,
-		"Name":       name,
-		"Chart":      chart,
-		"Stats":      stats,
-		"LastDeploy": lastDeploy,
+	d.render(w, r, "outcome_detail.html", "", pageData(map[string]any{
+		"ActiveNav":      "outcomes",
+		"Title":          name,
+		"Name":           name,
+		"Chart":          chart,
+		"TotalWindow":    totalCount,
+		"Period":         resp.PeriodKind,
+		"Window":         "7d",
+		"BaselineMean":   fmt.Sprintf("%.1f", bMean),
+		"BaselineStddev": fmt.Sprintf("%.1f", bStd),
+		"CapturedAt":     capturedAt,
+		"SigmaPill":      outcomeSigmaPill(sigma, deltaPct),
+		"CurrentLabel":   fmt.Sprintf("%.0f/%s vs baseline %.1f/%s", currentPerPeriod, resp.PeriodKind, safeDeref(baseline), resp.PeriodKind),
 	}))
 }
 
-type stat struct {
-	Label string
-	Value string
+func safeDeref(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
 }
 
-type deployContext struct {
-	SHA     string
-	Elapsed string
-	Verdict string
-}
 
 // indexedDeploy pairs a chart series index with a short deploy label.
 type indexedDeploy struct {

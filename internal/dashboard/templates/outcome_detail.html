@@ -1,0 +1,83 @@
+{{define "content"}}
+<div class="od-page">
+  <div class="od-header">
+    <div class="od-crumbs mono">
+      <a href="/outcomes">outcomes</a>
+      <span>/</span>
+      <span class="od-crumb-current">{{.Name}}</span>
+    </div>
+    <div class="od-title-block">
+      <div class="od-title-meta">
+        <span class="meta-label" style="letter-spacing:0.08em">Product event</span>
+      </div>
+      <h1 class="od-title mono">{{.Name}}</h1>
+      <div class="od-pill-row">
+        {{.SigmaPill}}
+        <span class="od-pill-sub mono">{{.CurrentLabel}}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="od-body">
+    <div class="od-main">
+      {{if .Chart}}
+      <section class="od-section">
+        <header class="od-section-head">
+          <h2>Event volume</h2>
+          <div class="od-section-meta mono">
+            <span>baseline {{.BaselineMean}} ± {{.BaselineStddev}}</span>
+            <span class="od-sep">·</span>
+            <span>window {{.Window}}</span>
+            <span class="od-sep">·</span>
+            <span>period {{.Period}}</span>
+          </div>
+        </header>
+        <div class="od-chart-wrap">{{.Chart}}</div>
+      </section>
+      {{end}}
+    </div>
+
+    <aside class="od-rail">
+      <div class="od-rail-section">
+        <div class="meta-label">Total ({{.Window}})</div>
+        <div class="od-rail-big mono">{{.TotalWindow}}</div>
+        <div class="od-rail-sub mono">events across window</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="od-rail-section">
+        <div class="meta-label">Baseline mean</div>
+        <div class="meta-value mono">{{.BaselineMean}}<span class="od-rail-unit"> /hour</span></div>
+        <div class="od-rail-sub mono">hourly average</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="od-rail-section">
+        <div class="meta-label">Baseline stddev</div>
+        <div class="meta-value mono">{{.BaselineStddev}}</div>
+        <div class="od-rail-sub mono">σ unit for Δ</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="od-rail-section">
+        <div class="meta-label">Period</div>
+        <div class="meta-value mono">{{.Period}}</div>
+      </div>
+      <div class="hdiv"></div>
+
+      <div class="od-rail-section">
+        <div class="meta-label">Window</div>
+        <div class="meta-value mono">{{.Window}}</div>
+      </div>
+      {{if .CapturedAt}}
+      <div class="hdiv"></div>
+      <div class="od-rail-section">
+        <div class="meta-label">Baseline captured</div>
+        <div class="meta-value mono">{{.CapturedAt}}</div>
+      </div>
+      {{end}}
+    </aside>
+  </div>
+</div>
+{{end}}
+{{define "outcome_detail.html"}}{{template "layout.html" .}}{{end}}

@@ -7,10 +7,27 @@ import (
 	"strings"
 )
 
-// SparklineSVG returns an inline <svg> element with a polyline for the given
-// data series and optional deploy marker lines. The result is safe to embed
-// directly in templates.
+// SparklineOptions configures sparkline appearance.
+type SparklineOptions struct {
+	Stroke string // CSS color for the line; defaults to "var(--accent)"
+	Fill   string // CSS color for the area fill; defaults to "var(--accent-soft)"
+}
+
+// SparklineSVG returns an inline <svg> element with a filled area + line for
+// the given data series and optional deploy marker lines.
 func SparklineSVG(series []float64, width, height int, deployIndices ...int) template.HTML {
+	return SparklineSVGStyled(series, width, height, SparklineOptions{}, deployIndices...)
+}
+
+// SparklineSVGStyled is like SparklineSVG but accepts custom stroke/fill colors.
+func SparklineSVGStyled(series []float64, width, height int, opts SparklineOptions, deployIndices ...int) template.HTML {
+	if opts.Stroke == "" {
+		opts.Stroke = "var(--accent)"
+	}
+	if opts.Fill == "" {
+		opts.Fill = "var(--accent-soft)"
+	}
+
 	if len(series) == 0 {
 		return template.HTML(fmt.Sprintf(
 			`<svg class="sparkline" width="%d" height="%d" viewBox="0 0 %d %d"></svg>`,
@@ -28,25 +45,24 @@ func SparklineSVG(series []float64, width, height int, deployIndices ...int) tem
 		}
 	}
 
-	// Avoid division by zero for flat lines.
 	span := maxVal - minVal
 	if span == 0 {
 		span = 1
 	}
 
-	padding := 2.0
+	padding := 1.0
 	drawW := float64(width) - 2*padding
 	drawH := float64(height) - 2*padding
 
 	points := make([]string, len(series))
 	for i, v := range series {
-		var x, y float64
+		var x float64
 		if len(series) == 1 {
 			x = drawW / 2
 		} else {
 			x = drawW * float64(i) / float64(len(series)-1)
 		}
-		y = drawH - drawH*(v-minVal)/span
+		y := drawH - drawH*(v-minVal)/span
 		points[i] = fmt.Sprintf("%.1f,%.1f", padding+x, padding+y)
 	}
 
@@ -54,6 +70,7 @@ func SparklineSVG(series []float64, width, height int, deployIndices ...int) tem
 	n := len(series)
 	fmt.Fprintf(&b, `<svg class="sparkline" width="%d" height="%d" viewBox="0 0 %d %d" preserveAspectRatio="none">`,
 		width, height, width, height)
+
 	for _, idx := range deployIndices {
 		if idx >= 0 && idx < n {
 			var dx float64
@@ -68,9 +85,30 @@ func SparklineSVG(series []float64, width, height int, deployIndices ...int) tem
 			)
 		}
 	}
+
+	// Area fill: close the path down to the baseline.
+	firstX := padding
+	if len(series) == 1 {
+		firstX = padding + drawW/2
+	}
+	lastX := padding + drawW
+	if len(series) == 1 {
+		lastX = firstX
+	}
 	fmt.Fprintf(&b,
-		`<polyline fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="%s"/>`,
+		`<polygon fill="%s" opacity="0.7" points="%s %.1f,%.1f %.1f,%.1f"/>`,
+		opts.Fill,
+		strings.Join(points, " "),
+		lastX, float64(height)-padding,
+		firstX, float64(height)-padding,
+	)
+
+	// Stroke line on top.
+	fmt.Fprintf(&b,
+		`<polyline fill="none" stroke="%s" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="%s"/>`,
+		opts.Stroke,
 		strings.Join(points, " "))
+
 	b.WriteString(`</svg>`)
 	return template.HTML(b.String())
 }
@@ -146,12 +184,24 @@ func ChartSVG(opts ChartOptions) template.HTML {
 		fmt.Fprintf(&b, `<line x1="%.0f" y1="%.0f" x2="%.0f" y2="%.0f" class="chart-grid"/>`, padLeft, y, w-padRight, y)
 	}
 
-	// X axis labels — up to 7.
+	// X axis labels — up to 4 evenly spaced.
 	n := len(opts.Series)
-	step := max(1, n/7)
-	for i := 0; i < n; i += step {
-		x := padLeft + drawW*float64(i)/float64(max(1, n-1))
-		fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" class="chart-label-x" text-anchor="middle">%s</text>`, x, h-5, opts.Series[i].Label)
+	xLabelIdx := []int{0}
+	if n > 2 {
+		xLabelIdx = append(xLabelIdx, n/3, 2*n/3)
+	}
+	if n > 1 {
+		xLabelIdx = append(xLabelIdx, n-1)
+	}
+	for i, idx := range xLabelIdx {
+		x := padLeft + drawW*float64(idx)/float64(max(1, n-1))
+		anchor := "middle"
+		if i == 0 {
+			anchor = "start"
+		} else if i == len(xLabelIdx)-1 {
+			anchor = "end"
+		}
+		fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" class="chart-label-x" text-anchor="%s">%s</text>`, x, h-5, anchor, shortenChartLabel(opts.Series[idx].Label))
 	}
 
 	// Baseline band (±1σ) — rendered first so it sits behind the data line.
@@ -218,6 +268,18 @@ type ChartOptions struct {
 type ChartPoint struct {
 	Label string
 	Value float64
+}
+
+// shortenChartLabel trims RFC3339 or date timestamps to a compact form.
+// "2026-05-19T12:00:00Z" → "05-19 12:00", "2026-05-19" → "05-19"
+func shortenChartLabel(s string) string {
+	if len(s) >= 16 && s[4] == '-' && s[10] == 'T' {
+		return s[5:10] + " " + s[11:16]
+	}
+	if len(s) >= 10 && s[4] == '-' {
+		return s[5:10]
+	}
+	return s
 }
 
 func formatValue(v float64) string {

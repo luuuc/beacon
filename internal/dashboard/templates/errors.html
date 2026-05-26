@@ -1,11 +1,59 @@
-{{define "errors-cards"}}
-<div id="errors-cards" hx-get="/errors" hx-trigger="every 30s" hx-swap="innerHTML">
+{{define "errors-list"}}
+<div id="errors-list">
   {{if .Errors}}
-  <div class="card-grid">
+  <div class="el-list">
+    <div class="el-list-head">
+      <span>Error</span>
+      <span>Trend · 24h</span>
+      <span>Events</span>
+      <span>Last seen</span>
+    </div>
     {{range .Errors}}
     {{template "error_card.html" .}}
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No errors match this filter.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "errors-cards"}}
+<div id="errors-cards" hx-get="/errors" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if or .Errors (gt .Stats.Total 0)}}
+  {{/* Summary strip */}}
+  <div class="el-summary">
+    <div class="el-stat">
+      <span class="el-stat-label">Open errors</span>
+      <div class="el-stat-num el-mono">{{.Stats.Total}}</div>
+    </div>
+    <div class="el-stat">
+      <span class="el-stat-label">New (24h)</span>
+      <div class="el-stat-num el-mono">{{.Stats.New}}</div>
+    </div>
+    <div class="el-stat">
+      <span class="el-stat-label">Total events</span>
+      <div class="el-stat-num el-mono">{{.Stats.Events}}</div>
+    </div>
+    <div class="el-stat">
+      <span class="el-stat-label">Trending up</span>
+      <div class="el-stat-num el-mono ed-trend-up">{{.Stats.Increasing}}</div>
+    </div>
+  </div>
+
+  {{/* Filter chips */}}
+  <div class="el-filters">
+    <div class="el-chips">
+      <button class="el-chip{{if or (eq .Filter "") (eq .Filter "all")}} el-chip-active{{end}}" hx-get="/errors?filter=all&list=1" hx-target="#errors-list" hx-swap="outerHTML">All <span class="el-chip-c el-mono">{{.Stats.Total}}</span></button>
+      <button class="el-chip{{if eq .Filter "new"}} el-chip-active{{end}}" hx-get="/errors?filter=new&list=1" hx-target="#errors-list" hx-swap="outerHTML">New <span class="el-chip-c el-mono">{{.Stats.New}}</span></button>
+      <button class="el-chip{{if eq .Filter "unresolved"}} el-chip-active{{end}}" hx-get="/errors?filter=unresolved&list=1" hx-target="#errors-list" hx-swap="outerHTML">Unresolved <span class="el-chip-c el-mono">{{.Stats.Unresolved}}</span></button>
+      <button class="el-chip{{if eq .Filter "resolved"}} el-chip-active{{end}}" hx-get="/errors?filter=resolved&list=1" hx-target="#errors-list" hx-swap="outerHTML">Resolved <span class="el-chip-c el-mono">{{.Stats.Resolved}}</span></button>
+    </div>
+  </div>
+
+  {{/* List */}}
+  {{template "errors-list" .}}
   {{else}}
   <div class="empty-state">
     <p>No errors. All quiet.</p>
@@ -14,8 +62,12 @@
 </div>
 {{end}}
 {{define "content"}}
-<h1>Errors</h1>
-<p class="subtitle">Is anything breaking?</p>
-{{template "errors-cards" .}}
+<div class="el-page">
+  <div class="el-header">
+    <h1 class="el-title">Errors</h1>
+    <div class="el-subtitle">Is anything breaking?</div>
+  </div>
+  {{template "errors-cards" .}}
+</div>
 {{end}}
 {{define "errors.html"}}{{template "layout.html" .}}{{end}}

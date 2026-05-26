@@ -1007,3 +1007,354 @@ func TestHandleAnomalies_emptyResponse(t *testing.T) {
 		t.Errorf("anomalies = %d, want 0", len(resp.Anomalies))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// classifyTrend
+// ---------------------------------------------------------------------------
+
+func TestClassifyTrend(t *testing.T) {
+	cases := []struct {
+		name   string
+		counts []int64
+		want   string
+	}{
+		{"empty", nil, "stable"},
+		{"single", []int64{10}, "stable"},
+		{"all zeros", []int64{0, 0, 0, 0}, "stable"},
+		{"first half zero", []int64{0, 0, 5, 10}, "increasing"},
+		{"increasing", []int64{1, 2, 10, 20}, "increasing"},
+		{"decreasing", []int64{20, 20, 5, 5}, "decreasing"},
+		{"stable", []int64{10, 10, 10, 10}, "stable"},
+		{"boundary increasing", []int64{100, 100, 126, 126}, "increasing"},
+		{"boundary stable high", []int64{100, 100, 124, 124}, "stable"},
+		{"boundary decreasing", []int64{100, 100, 74, 74}, "decreasing"},
+		{"boundary stable low", []int64{100, 100, 76, 76}, "stable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyTrend(tc.counts)
+			if got != tc.want {
+				t.Errorf("classifyTrend(%v) = %q, want %q", tc.counts, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetDeployBaseline
+// ---------------------------------------------------------------------------
+
+func TestGetDeployBaseline_happyPath(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	ts1 := fixedNow.Add(-2 * time.Hour)
+	ts2 := fixedNow.Add(-1 * time.Hour)
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindOutcome, Name: "signup.completed",
+		PeriodKind: beacondb.PeriodBaseline, PeriodWindow: "deploy",
+		PeriodStart: ts1, Count: 100, P50: fp(50), P95: fp(90), P99: fp(99),
+	})
+	seedMetric(t, fake, beacondb.Metric{
+		Kind: beacondb.KindOutcome, Name: "signup.completed",
+		PeriodKind: beacondb.PeriodBaseline, PeriodWindow: "deploy",
+		PeriodStart: ts2, Count: 200, P50: fp(60), P95: fp(95), P99: fp(100),
+	})
+
+	resp, err := h.GetDeployBaseline(context.Background(), beacondb.KindOutcome, "signup.completed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if resp.Count != 200 {
+		t.Errorf("count = %d, want 200 (latest)", resp.Count)
+	}
+	if resp.Kind != "outcome" {
+		t.Errorf("kind = %q", resp.Kind)
+	}
+}
+
+func TestGetDeployBaseline_noRows(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	resp, err := h.GetDeployBaseline(context.Background(), beacondb.KindOutcome, "nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != nil {
+		t.Errorf("expected nil response for no rows, got %+v", resp)
+	}
+}
+
+func TestGetDeployBaseline_badKind(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	_, err := h.GetDeployBaseline(context.Background(), "banana", "x")
+	if err == nil {
+		t.Fatal("expected error for invalid kind")
+	}
+}
+
+func TestGetDeployBaseline_emptyName(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	_, err := h.GetDeployBaseline(context.Background(), beacondb.KindOutcome, "")
+	if err == nil {
+		t.Fatal("expected error for empty name")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetDeployEvents
+// ---------------------------------------------------------------------------
+
+func TestGetDeployEvents(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context:   map[string]any{"deploy_sha": "abc123"},
+		CreatedAt: fixedNow.Add(-2 * time.Hour),
+	})
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindOutcome, Name: "deploy.shipped",
+		Context:   map[string]any{},
+		CreatedAt: fixedNow.Add(-1 * time.Hour),
+	})
+
+	deploys, err := h.GetDeployEvents(context.Background(), fixedNow.Add(-3*time.Hour), fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deploys) != 2 {
+		t.Fatalf("deploys = %d, want 2", len(deploys))
+	}
+	if deploys[0].SHA != "abc123" {
+		t.Errorf("first SHA = %q, want abc123", deploys[0].SHA)
+	}
+	if deploys[1].SHA != "" {
+		t.Errorf("second SHA = %q, want empty", deploys[1].SHA)
+	}
+}
+
+func TestGetDeployEvents_empty(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	deploys, err := h.GetDeployEvents(context.Background(), fixedNow.Add(-1*time.Hour), fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deploys) != 0 {
+		t.Errorf("deploys = %d, want 0", len(deploys))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetRecentErrorEvents
+// ---------------------------------------------------------------------------
+
+func TestGetRecentErrorEvents(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: "fp1",
+		Properties: map[string]any{"message": "err1"},
+		CreatedAt:  fixedNow.Add(-2 * time.Hour),
+	})
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "RuntimeError", Fingerprint: "fp1",
+		Properties: map[string]any{"message": "err2"},
+		CreatedAt:  fixedNow.Add(-1 * time.Hour),
+	})
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindError, Name: "Other", Fingerprint: "fp2",
+		Properties: map[string]any{"message": "other"},
+		CreatedAt:  fixedNow.Add(-1 * time.Hour),
+	})
+
+	events, err := h.GetRecentErrorEvents(context.Background(), "fp1", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+}
+
+func TestGetRecentErrorEvents_emptyFingerprint(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	events, err := h.GetRecentErrorEvents(context.Background(), "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events != nil {
+		t.Errorf("expected nil for empty fingerprint, got %v", events)
+	}
+}
+
+func TestGetRecentErrorEvents_zeroLimit(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	events, err := h.GetRecentErrorEvents(context.Background(), "fp1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events != nil {
+		t.Errorf("expected nil for zero limit, got %v", events)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ParseWindow (exported)
+// ---------------------------------------------------------------------------
+
+func TestParseWindowExported(t *testing.T) {
+	d, err := ParseWindow("7d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d != 7*24*time.Hour {
+		t.Errorf("got %v", d)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// outcomeDescriptions
+// ---------------------------------------------------------------------------
+
+func TestOutcomeDescriptions(t *testing.T) {
+	h, fake := newTestHandler(t, Config{})
+
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindOutcome, Name: "signup.completed",
+		Properties: map[string]any{"description": "User completed signup flow"},
+		CreatedAt:  fixedNow.Add(-1 * time.Hour),
+	})
+	seedEvent(t, fake, beacondb.Event{
+		Kind: beacondb.KindOutcome, Name: "checkout.completed",
+		Properties: map[string]any{},
+		CreatedAt:  fixedNow.Add(-1 * time.Hour),
+	})
+
+	descs := h.outcomeDescriptions(context.Background(), fixedNow.Add(-2*time.Hour), fixedNow)
+	if descs["signup.completed"] != "User completed signup flow" {
+		t.Errorf("signup desc = %q", descs["signup.completed"])
+	}
+	if _, ok := descs["checkout.completed"]; ok {
+		t.Error("checkout should have no description")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// foldHourliesIntoDays edge case: percentiles across hours
+// ---------------------------------------------------------------------------
+
+func TestFoldHourliesIntoDays_withPercentiles(t *testing.T) {
+	hourlies := []beacondb.Metric{
+		{PeriodStart: time.Date(2026, 4, 9, 10, 0, 0, 0, time.UTC), Count: 10, P50: fp(100), P95: fp(200), P99: fp(300)},
+		{PeriodStart: time.Date(2026, 4, 9, 11, 0, 0, 0, time.UTC), Count: 20, P50: fp(150), P95: fp(250), P99: fp(350)},
+		{PeriodStart: time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC), Count: 5},
+	}
+	points := foldHourliesIntoDays(hourlies)
+	if len(points) != 2 {
+		t.Fatalf("len = %d, want 2", len(points))
+	}
+	// Day 1: weighted average P50 = (100*10 + 150*20)/(10+20) = 4000/30 ≈ 133.33
+	if points[0].P50 == nil {
+		t.Fatal("day 1 P50 is nil")
+	}
+	if *points[0].P50 < 133.3 || *points[0].P50 > 133.4 {
+		t.Errorf("day 1 P50 = %v, want ~133.33", *points[0].P50)
+	}
+	// Day 2: no percentiles
+	if points[1].P50 != nil {
+		t.Errorf("day 2 P50 should be nil, got %v", *points[1].P50)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// writeQueryError
+// ---------------------------------------------------------------------------
+
+func TestWriteQueryError_validationError(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	h.writeQueryError(rec, invalidQueryf("bad param"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestWriteQueryError_storageError(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	h.writeQueryError(rec, fmt.Errorf("connection refused"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleErrors HTTP path
+// ---------------------------------------------------------------------------
+
+func TestHandleErrors_badSince(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/errors?since=bogus", nil)
+	mux(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandlePerfEndpoints_badWindow(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/perf/endpoints?window=bogus", nil)
+	mux(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleAnomalies_badSince(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/anomalies?since=bogus", nil)
+	mux(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleDismissAnomaly_badID(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/anomalies/notanumber", nil)
+	mux(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Now() method
+// ---------------------------------------------------------------------------
+
+func TestHandlerNow(t *testing.T) {
+	h, _ := newTestHandler(t, Config{})
+	got := h.Now()
+	if !got.Equal(fixedNow) {
+		t.Errorf("Now() = %v, want %v", got, fixedNow)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// mean helper
+// ---------------------------------------------------------------------------
+
+func TestMean(t *testing.T) {
+	if got := mean(nil); got != 0 {
+		t.Errorf("mean(nil) = %v, want 0", got)
+	}
+	if got := mean([]float64{10, 20, 30}); got != 20 {
+		t.Errorf("mean([10,20,30]) = %v, want 20", got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -233,7 +234,7 @@ func clearEnv(t *testing.T) {
 		"BEACON_FILTER_EXCLUDE_PATHS", "BEACON_FILTER_DEFAULTS",
 	} {
 		t.Setenv(k, "")
-		os.Unsetenv(k)
+		_ = os.Unsetenv(k)
 	}
 }
 
@@ -360,5 +361,329 @@ func TestPathFilterDefaultsDisabled(t *testing.T) {
 	}
 	if f.ShouldExclude("/lock360.php") {
 		t.Error("expected *.php to NOT be excluded when defaults disabled")
+	}
+}
+
+func TestParseBeaconDuration(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"14d", 14 * 24 * time.Hour, false},
+		{"1d", 24 * time.Hour, false},
+		{"0d", 0, false},
+		{"24h", 24 * time.Hour, false},
+		{"1h30m", 90 * time.Minute, false},
+		{"500ms", 500 * time.Millisecond, false},
+		{"", 0, true},
+		{"xd", 0, true},
+		{"notaduration", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := ParseBeaconDuration(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("ParseBeaconDuration(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultExcludePaths(t *testing.T) {
+	paths := DefaultExcludePaths()
+	if len(paths) != 4 {
+		t.Fatalf("len = %d, want 4", len(paths))
+	}
+	// Verify it's a copy — mutating the result shouldn't affect subsequent calls.
+	paths[0] = "mutated"
+	fresh := DefaultExcludePaths()
+	if fresh[0] == "mutated" {
+		t.Error("DefaultExcludePaths returned a reference, not a copy")
+	}
+}
+
+func TestPathFilterPatterns(t *testing.T) {
+	f := NewPathFilter(FilterConfig{ExcludePaths: []string{"/custom/*"}})
+	pats := f.Patterns()
+	if len(pats) != 5 { // 4 defaults + 1 custom
+		t.Fatalf("len = %d, want 5", len(pats))
+	}
+	// Verify it's a copy.
+	pats[0] = "mutated"
+	fresh := f.Patterns()
+	if fresh[0] == "mutated" {
+		t.Error("Patterns returned a reference, not a copy")
+	}
+}
+
+func TestApplyEnvErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  string
+	}{
+		{"bad http port", "BEACON_HTTP_PORT", "abc"},
+		{"bad mcp port", "BEACON_MCP_PORT", "abc"},
+		{"bad pprof", "BEACON_PPROF_ENABLED", "abc"},
+		{"bad max conns", "BEACON_DATABASE_MAX_CONNS", "abc"},
+		{"bad trust xff", "BEACON_INGEST_TRUST_XFF", "abc"},
+		{"bad idemp entries", "BEACON_INGEST_IDEMP_MAX_ENTRIES", "abc"},
+		{"bad filter defaults", "BEACON_FILTER_DEFAULTS", "abc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tc.key, tc.val)
+			_, err := Load("")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestApplyEnvMCPPort(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_MCP_PORT", "5555")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MCPPort != 5555 {
+		t.Errorf("mcp_port = %d, want 5555", cfg.Server.MCPPort)
+	}
+	if !cfg.Server.MCPPortSet {
+		t.Error("MCPPortSet should be true")
+	}
+}
+
+func TestApplyEnvPprofEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_PPROF_ENABLED", "true")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Server.PprofEnabled {
+		t.Error("pprof_enabled should be true")
+	}
+}
+
+func TestApplyEnvIngestFields(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_INGEST_TRUST_XFF", "true")
+	t.Setenv("BEACON_INGEST_IDEMP_MAX_ENTRIES", "5000")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Ingest.TrustXFF {
+		t.Error("trust_xff should be true")
+	}
+	if cfg.Ingest.IdempMaxEntries != 5000 {
+		t.Errorf("idemp_max_entries = %d, want 5000", cfg.Ingest.IdempMaxEntries)
+	}
+}
+
+func TestApplyEnvDatabaseSchema(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_DATABASE_SCHEMA", "myschema")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.Schema != "myschema" {
+		t.Errorf("schema = %q, want myschema", cfg.Database.Schema)
+	}
+}
+
+func TestApplyEnvMaxConns(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BEACON_DATABASE_MAX_CONNS", "25")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.MaxConns != 25 {
+		t.Errorf("max_conns = %d, want 25", cfg.Database.MaxConns)
+	}
+}
+
+func TestMergeNonZeroAllFields(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "beacon.yml")
+	if err := os.WriteFile(path, []byte(`
+server:
+  bind: 10.0.0.1
+  http_port: 8080
+  mcp_port: 9090
+  pprof_enabled: true
+  auth:
+    token: s3cret
+database:
+  url: postgres://localhost/db
+  adapter: postgres
+  path: /tmp/db
+  schema: public
+  max_conns: 50
+retention:
+  events_days: 30
+  ambient_retention_hours: 48
+  rollups_hour_days: 180
+rollup:
+  tick_seconds: 120
+  prune_at: "04:00"
+  timezone: America/New_York
+baseline:
+  windows: ["12h", "3d"]
+ingest:
+  trust_xff: true
+  idemp_max_entries: 200000
+ambient:
+  anomaly:
+    baseline_window: "7d"
+    detection_window: "12h"
+    sigma_threshold: 2.5
+    min_volume: 20
+filter:
+  exclude_paths: ["/health"]
+  defaults: false
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MCPPort != 9090 {
+		t.Errorf("mcp_port = %d, want 9090", cfg.Server.MCPPort)
+	}
+	if !cfg.Server.MCPPortSet {
+		t.Error("MCPPortSet should be true from YAML")
+	}
+	if cfg.Retention.EventsDays != 30 {
+		t.Errorf("events_days = %d, want 30", cfg.Retention.EventsDays)
+	}
+	if cfg.Retention.AmbientRetentionHours != 48 {
+		t.Errorf("ambient_retention_hours = %d, want 48", cfg.Retention.AmbientRetentionHours)
+	}
+	if cfg.Retention.RollupsHourDays != 180 {
+		t.Errorf("rollups_hour_days = %d, want 180", cfg.Retention.RollupsHourDays)
+	}
+	if cfg.Rollup.TickSeconds != 120 {
+		t.Errorf("tick_seconds = %d, want 120", cfg.Rollup.TickSeconds)
+	}
+	if cfg.Rollup.PruneAt != "04:00" {
+		t.Errorf("prune_at = %q, want 04:00", cfg.Rollup.PruneAt)
+	}
+	if cfg.Rollup.Timezone != "America/New_York" {
+		t.Errorf("timezone = %q", cfg.Rollup.Timezone)
+	}
+	if len(cfg.Baseline.Windows) != 2 || cfg.Baseline.Windows[0] != "12h" {
+		t.Errorf("baseline.windows = %v", cfg.Baseline.Windows)
+	}
+	if !cfg.Ingest.TrustXFF {
+		t.Error("trust_xff should be true")
+	}
+	if cfg.Ingest.IdempMaxEntries != 200000 {
+		t.Errorf("idemp_max_entries = %d", cfg.Ingest.IdempMaxEntries)
+	}
+	if cfg.Ambient.Anomaly.BaselineWindow != "7d" {
+		t.Errorf("baseline_window = %q", cfg.Ambient.Anomaly.BaselineWindow)
+	}
+	if cfg.Ambient.Anomaly.DetectionWindow != "12h" {
+		t.Errorf("detection_window = %q", cfg.Ambient.Anomaly.DetectionWindow)
+	}
+	if cfg.Ambient.Anomaly.SigmaThreshold != 2.5 {
+		t.Errorf("sigma_threshold = %f", cfg.Ambient.Anomaly.SigmaThreshold)
+	}
+	if cfg.Ambient.Anomaly.MinVolume != 20 {
+		t.Errorf("min_volume = %d", cfg.Ambient.Anomaly.MinVolume)
+	}
+	if cfg.Database.Schema != "public" {
+		t.Errorf("schema = %q", cfg.Database.Schema)
+	}
+	if cfg.Database.MaxConns != 50 {
+		t.Errorf("max_conns = %d", cfg.Database.MaxConns)
+	}
+}
+
+func TestValidatePortRange(t *testing.T) {
+	cases := []struct {
+		name string
+		port int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"too high", 70000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Server.HTTPPort = tc.port
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestValidateEmptyBind(t *testing.T) {
+	cfg := Defaults()
+	cfg.Server.Bind = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for empty bind")
+	}
+}
+
+func TestValidateMaxConns(t *testing.T) {
+	cfg := Defaults()
+	cfg.Database.MaxConns = 201
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for max_conns > 200")
+	}
+	cfg.Database.MaxConns = -1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for negative max_conns")
+	}
+}
+
+func TestValidateIdempMaxEntries(t *testing.T) {
+	cfg := Defaults()
+	cfg.Ingest.IdempMaxEntries = -1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for negative idemp_max_entries")
+	}
+}
+
+func TestIsLoopbackBind(t *testing.T) {
+	cases := []struct {
+		bind string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"localhost", true},
+		{"0.0.0.0", false},
+		{"10.0.0.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.bind, func(t *testing.T) {
+			cfg := Config{Server: ServerConfig{Bind: tc.bind}}
+			if got := cfg.IsLoopbackBind(); got != tc.want {
+				t.Errorf("IsLoopbackBind() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

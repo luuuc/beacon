@@ -1,6 +1,6 @@
 // Package dashboard is Beacon's binary-hosted web UI. It serves HTML pages
-// from embedded templates, CSS, and htmx — all compiled into the binary via
-// go:embed. Dashboard handlers import internal/reads directly for data.
+// from embedded templates, CSS, and htmx — all compiled into the binary.
+// Dashboard handlers import internal/reads directly for data.
 package dashboard
 
 import (
@@ -42,6 +42,7 @@ func New(cfg Config, readsH *reads.Handler, log *slog.Logger) *Dashboard {
 	funcMap := template.FuncMap{
 		"sparkline":  SparklineSVG,
 		"pathEscape": url.PathEscape,
+		"lower":      strings.ToLower,
 	}
 
 	// Parse layout + partials as the base set. Each page clones this
@@ -57,6 +58,7 @@ func New(cfg Config, readsH *reads.Handler, log *slog.Logger) *Dashboard {
 		"templates/login.html",
 		"templates/landing.html",
 		"templates/outcomes.html",
+		"templates/outcome_detail.html",
 		"templates/performance.html",
 		"templates/errors.html",
 		"templates/metric_detail.html",

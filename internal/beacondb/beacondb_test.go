@@ -1,6 +1,7 @@
 package beacondb
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -94,14 +95,52 @@ func TestDimensionHashDistinct(t *testing.T) {
 }
 
 func TestKindValid(t *testing.T) {
-	for _, k := range []Kind{KindOutcome, KindPerf, KindError, KindBaseline} {
+	for _, k := range []Kind{KindOutcome, KindPerf, KindError, KindBaseline, KindAmbient} {
 		if !k.Valid() {
 			t.Errorf("%q should be valid", k)
 		}
 	}
 	for _, k := range []Kind{"", "banana", "ERROR"} {
-		if Kind(k).Valid() {
+		if k.Valid() {
 			t.Errorf("%q should be invalid", k)
 		}
+	}
+}
+
+func TestEncodeCanonicalScalarTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		val  any
+		want string
+	}{
+		{"nil", nil, "null"},
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		{"string", "hello", `"hello"`},
+		{"int", 42, "42"},
+		{"int64", int64(100), "100"},
+		{"float64", 3.14, "3.14"},
+		{"json.Number", json.Number("99"), "99"},
+		{"empty map", map[string]any{}, "{}"},
+		{"empty slice", []any{}, "[]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CanonicalJSON(tc.val)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDimensionHashError(t *testing.T) {
+	bad := map[string]any{"x": make(chan int)}
+	_, err := DimensionHash(bad)
+	if err == nil {
+		t.Fatal("expected error for unsupported type in dimensions")
 	}
 }

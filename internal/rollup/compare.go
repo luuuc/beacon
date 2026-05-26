@@ -120,11 +120,12 @@ func (w *Worker) CompareDeployBaseline(ctx context.Context, kind beacondb.Kind, 
 	// Normalize the current window to the same 24h shape as the baseline so
 	// ratios compare like-for-like. If less than 24h has elapsed, scale up.
 	elapsed := now.Sub(deployTime)
-	if elapsed <= 0 {
+	switch {
+	case elapsed <= 0:
 		cmp.Current = currentTotal
-	} else if elapsed < DeploymentLookback {
+	case elapsed < DeploymentLookback:
 		cmp.Current = int64(float64(currentTotal) * (float64(DeploymentLookback) / float64(elapsed)))
-	} else {
+	default:
 		cmp.Current = currentTotal
 	}
 

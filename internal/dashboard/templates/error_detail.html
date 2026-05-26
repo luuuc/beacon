@@ -1,47 +1,116 @@
 {{define "content"}}
-<h1>{{.Name}}</h1>
-<p class="subtitle">{{if .Message}}{{.Message}}{{else}}Error detail{{end}} — {{.Fingerprint}}</p>
+<div class="ed-page">
+  {{/* Header strip */}}
+  <div class="ed-strip">
+    <div class="ed-strip-inner">
+      <div class="ed-strip-top">
+        <span class="ed-strip-tag ed-mono">errors</span>
+        <span class="ed-strip-slash ed-mono">/</span>
+        <span class="ed-strip-fp ed-mono" title="{{.Fingerprint}}">{{.Fingerprint}}</span>
+        {{if not .HasSample}}
+        <span class="ed-pill ed-pill-warn" style="margin-left:auto">pruned</span>
+        {{end}}
+      </div>
+      <h1 class="ed-title ed-mono">{{.Name}}</h1>
+      {{if .Message}}<div class="ed-msg">{{.Message}}</div>{{end}}
+    </div>
+  </div>
 
-{{if .HasSample}}
-<div class="request-context">
-  <h2>Request context</h2>
-  <dl class="context-grid">
-    {{if .ReqPath}}<div class="context-item"><dt>Path</dt><dd>{{if .ReqMethod}}<span class="http-method">{{.ReqMethod}}</span> {{end}}{{.ReqPath}}</dd></div>{{end}}
-    {{if .DeploySHA}}<div class="context-item"><dt>Deploy</dt><dd><code>{{.DeploySHA}}</code></dd></div>{{end}}
-    {{if .Environment}}<div class="context-item"><dt>Environment</dt><dd>{{.Environment}}</dd></div>{{end}}
-    {{if .RequestID}}<div class="context-item"><dt>Request ID</dt><dd><code>{{.RequestID}}</code></dd></div>{{end}}
-    {{if .FirstAppFrame}}<div class="context-item"><dt>First app frame</dt><dd><code class="app-frame-link">{{.FirstAppFrame}}</code></dd></div>{{end}}
-  </dl>
-</div>
-{{end}}
+  {{/* Metric rail */}}
+  <div class="ed-rail">
+    <div class="ed-rail-cell">
+      <div class="ed-rail-label">Occurrences</div>
+      <div class="ed-rail-num ed-mono">{{.Occurrences}}</div>
+      <div class="ed-rail-sub ed-mono {{.TrendClass}}">{{.TrendIcon}} {{.TrendText}}</div>
+    </div>
+    <div class="ed-rail-cell">
+      <div class="ed-rail-label">First seen</div>
+      <div class="ed-rail-val ed-mono">{{.FirstSeen}}</div>
+      <div class="ed-rail-sub ed-mono">{{.FirstSeenAgo}}</div>
+    </div>
+    <div class="ed-rail-cell">
+      <div class="ed-rail-label">Last seen</div>
+      <div class="ed-rail-val ed-mono">{{.LastSeen}}</div>
+      <div class="ed-rail-sub ed-mono">{{.LastSeenAgo}}</div>
+    </div>
+    <div class="ed-rail-cell">
+      <div class="ed-rail-label">Introduced in</div>
+      <div class="ed-rail-val ed-mono"><span class="ed-sha-strong">{{.IntroSHAShort}}</span><span class="ed-sha-faded">{{.IntroSHARest}}</span></div>
+      <div class="ed-rail-sub ed-mono">deploy sha</div>
+    </div>
+    <div class="ed-rail-cell">
+      <div class="ed-rail-label">Trend</div>
+      <div class="ed-rail-spark">{{.Sparkline}}</div>
+      <div class="ed-rail-sub ed-mono">last 7d</div>
+    </div>
+  </div>
 
-{{if .HasSample}}
-  {{if .HighlightedTrace}}
-  <div class="stack-trace">
-    <h2>Sample stack trace</h2>
-    <pre>{{.HighlightedTrace}}</pre>
+  {{/* Pruned notice */}}
+  {{if not .HasSample}}
+  <div class="ed-pruned">
+    <span class="ed-pruned-badge">notice</span>
+    <span>sample event pruned · raw events retained 14d · rollup data below is complete</span>
   </div>
   {{end}}
-{{else}}
-<div class="pruned-notice">
-  <p>Sample event pruned — raw error events are retained for 14 days. Rollup data (occurrences, timeline) is still available below.</p>
-</div>
-{{end}}
 
-{{if .Chart}}
-<div class="chart-container">{{.Chart}}</div>
-{{end}}
-<div class="detail-stats">
-  {{if .Stats}}
-  <dl class="stats-grid">
-    {{range .Stats}}
-    <div class="stat">
-      <dt>{{.Label}}</dt>
-      <dd>{{.Value}}</dd>
+  {{/* Body */}}
+  <div class="ed-body">
+    {{/* Request context (when sample available) */}}
+    {{if .HasSample}}
+    {{if or .ReqPath .DeploySHA .Environment .RequestID}}
+    <div class="ed-context">
+      <h2>Request context</h2>
+      <dl class="ed-context-grid">
+        {{if .ReqPath}}<div class="ed-context-item"><dt>Path</dt><dd>{{if .ReqMethod}}<strong>{{.ReqMethod}}</strong> {{end}}{{.ReqPath}}</dd></div>{{end}}
+        {{if .DeploySHA}}<div class="ed-context-item"><dt>Deploy</dt><dd class="ed-mono">{{.DeploySHA}}</dd></div>{{end}}
+        {{if .Environment}}<div class="ed-context-item"><dt>Environment</dt><dd>{{.Environment}}</dd></div>{{end}}
+        {{if .RequestID}}<div class="ed-context-item"><dt>Request ID</dt><dd class="ed-mono">{{.RequestID}}</dd></div>{{end}}
+      </dl>
     </div>
     {{end}}
-  </dl>
-  {{end}}
+    {{end}}
+
+    {{/* Occurrences chart */}}
+    {{if .Chart}}
+    <section class="ed-section">
+      <header class="ed-section-head">
+        <h2>Occurrences over time</h2>
+        <span class="ed-section-meta ed-mono">{{.BucketCount}} buckets · 1h interval</span>
+      </header>
+      <div class="ed-chart">{{.Chart}}</div>
+    </section>
+    {{end}}
+
+    {{/* Stack trace */}}
+    {{if .HasSample}}{{if .Frames}}
+    <section class="ed-section">
+      <header class="ed-section-head">
+        <h2>Stack trace</h2>
+        <span class="ed-section-meta ed-mono">{{.InAppFrames}} in-app · {{.TotalFrames}} total</span>
+      </header>
+      <div class="ed-stack">
+        <div class="ed-stack-head ed-mono">
+          <span>#</span>
+          <span>function</span>
+          <span>file</span>
+          <span>line</span>
+        </div>
+        {{range .Frames}}
+        <div class="ed-frame{{if not .InApp}} ed-frame-vendor{{end}}">
+          <div class="ed-frame-row1">
+            <span class="ed-frame-num">{{.Num}}</span>
+            <span class="ed-frame-fn">{{.Function}}</span>
+          </div>
+          <div class="ed-frame-row2">
+            <span class="ed-frame-file">{{.File}}</span>
+            {{if .Line}}<span class="ed-frame-line">:{{.Line}}</span>{{end}}
+          </div>
+        </div>
+        {{end}}
+      </div>
+    </section>
+    {{end}}{{end}}
+  </div>
 </div>
 {{end}}
 {{define "error_detail.html"}}{{template "layout.html" .}}{{end}}

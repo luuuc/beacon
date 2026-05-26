@@ -1,11 +1,68 @@
-{{define "performance-cards"}}
-<div id="performance-cards" hx-get="/performance" hx-trigger="every 30s" hx-swap="innerHTML">
-  {{if .Endpoints}}
-  <div class="card-grid">
-    {{range .Endpoints}}
+{{define "performance-list"}}
+<div id="performance-list">
+  {{if .Rows}}
+  <div class="pl-list">
+    <div class="pl-list-head">
+      <span>Endpoint</span>
+      <span class="pl-h-spark">P95 · 7d</span>
+      <span class="pl-h-num">P95</span>
+      <span class="pl-h-base">Baseline</span>
+      <span class="pl-h-delta">Δ vs baseline</span>
+      <span class="pl-h-req">Requests</span>
+    </div>
+    {{range .Rows}}
     {{template "perf_card.html" .}}
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No endpoints match this filter.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{define "performance-cards"}}
+<div id="performance-cards" hx-get="/performance" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if or .Rows (gt .Stats.Total 0)}}
+  {{/* Summary strip */}}
+  <div class="pl-summary">
+    <div class="pl-stat">
+      <span class="meta-label">Tracked</span>
+      <div class="pl-stat-num mono">{{.Stats.Total}}</div>
+      <div class="pl-stat-sub mono">endpoints + jobs</div>
+    </div>
+    <div class="pl-stat">
+      <span class="meta-label">Slower</span>
+      <div class="pl-stat-num mono perf-slower">{{.Stats.Slower}}</div>
+      <div class="pl-stat-sub mono">&gt; 0.5σ above baseline</div>
+    </div>
+    <div class="pl-stat">
+      <span class="meta-label">Stable</span>
+      <div class="pl-stat-num mono">{{.Stats.Stable}}</div>
+      <div class="pl-stat-sub mono">within ±0.5σ</div>
+    </div>
+    <div class="pl-stat">
+      <span class="meta-label">Faster</span>
+      <div class="pl-stat-num mono perf-faster">{{.Stats.Faster}}</div>
+      <div class="pl-stat-sub mono">&gt; 0.5σ below baseline</div>
+    </div>
+  </div>
+
+  {{/* Filter chips */}}
+  <div class="pl-filters">
+    <div class="pl-chips">
+      <button class="pl-chip{{if or (eq .Filter "") (eq .Filter "all")}} pl-chip-active{{end}}" hx-get="/performance?filter=all&list=1" hx-target="#performance-list" hx-swap="outerHTML">All <span class="pl-chip-c mono">{{.Stats.Total}}</span></button>
+      <button class="pl-chip{{if eq .Filter "slower"}} pl-chip-active{{end}}" hx-get="/performance?filter=slower&list=1" hx-target="#performance-list" hx-swap="outerHTML">Slower <span class="pl-chip-c mono">{{.Stats.Slower}}</span></button>
+      <button class="pl-chip{{if eq .Filter "stable"}} pl-chip-active{{end}}" hx-get="/performance?filter=stable&list=1" hx-target="#performance-list" hx-swap="outerHTML">Stable <span class="pl-chip-c mono">{{.Stats.Stable}}</span></button>
+      <button class="pl-chip{{if eq .Filter "faster"}} pl-chip-active{{end}}" hx-get="/performance?filter=faster&list=1" hx-target="#performance-list" hx-swap="outerHTML">Faster <span class="pl-chip-c mono">{{.Stats.Faster}}</span></button>
+      <span class="pl-divider"></span>
+      <button class="pl-chip{{if eq .Filter "http"}} pl-chip-active{{end}}" hx-get="/performance?filter=http&list=1" hx-target="#performance-list" hx-swap="outerHTML">HTTP</button>
+      <button class="pl-chip{{if eq .Filter "jobs"}} pl-chip-active{{end}}" hx-get="/performance?filter=jobs&list=1" hx-target="#performance-list" hx-swap="outerHTML">Jobs</button>
+    </div>
+  </div>
+
+  {{/* List */}}
+  {{template "performance-list" .}}
   {{else}}
   <div class="empty-state">
     <p>No performance data yet.</p>
@@ -14,8 +71,12 @@
 </div>
 {{end}}
 {{define "content"}}
-<h1>Performance</h1>
-<p class="subtitle">Is anything slowing down?</p>
-{{template "performance-cards" .}}
+<div class="pl-page">
+  <div class="pl-header">
+    <h1 class="pl-title">Performance</h1>
+    <div class="pl-subtitle">Is anything slowing down?</div>
+  </div>
+  {{template "performance-cards" .}}
+</div>
 {{end}}
 {{define "performance.html"}}{{template "layout.html" .}}{{end}}

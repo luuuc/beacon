@@ -1,14 +1,26 @@
 {{define "error_card.html"}}
-<a href="/errors/{{.Fingerprint}}" class="card">
-  <div class="card-header">
-    <span class="card-name">{{.Name}}</span>
-    {{if .IsNew}}<span class="badge badge-new">NEW</span>{{end}}
+<a href="/errors/{{.Fingerprint}}" class="el-row">
+  <div class="el-row-main">
+    <div class="el-row-titlerow">
+      <span class="el-row-exc el-mono">{{.Name}}</span>
+      {{if eq .Status "new"}}<span class="el-pill-new">new</span>{{end}}
+    </div>
+    {{if .Message}}<div class="el-row-msg el-mono">{{.Message}}</div>{{end}}
+    <div class="el-row-meta el-mono">
+      <span class="el-row-fp">{{.FPShort}}</span>
+      {{if .DeploySHA}}<span class="el-sep">·</span><span>deploy {{.DeploySHA}}</span>{{end}}
+      <span class="el-sep">·</span>
+      <span>first seen {{.FirstSeenRel}}</span>
+    </div>
   </div>
-  <div class="card-frame">{{.FirstAppFrame}}</div>
-  <div class="card-sparkline">{{.Sparkline}}</div>
-  <div class="card-metrics">
-    <span class="card-count">{{.Count}} occurrences</span>
-    <span class="card-last-seen">Last seen {{.LastSeen}}</span>
+  <div class="el-row-spark">{{.Sparkline}}</div>
+  <div class="el-row-count">
+    <div class="el-row-count-num el-mono">{{.Count}}</div>
+    <div class="el-row-count-trend el-mono {{.TrendClass}}">{{.TrendIcon}} {{.TrendText}}</div>
+  </div>
+  <div class="el-row-seen">
+    <div class="el-row-seen-rel el-mono">{{.LastSeenRel}}</div>
+    <div class="el-row-seen-abs el-mono">{{.LastSeenAbs}}</div>
   </div>
 </a>
 {{end}}
