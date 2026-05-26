@@ -1,30 +1,46 @@
 {{define "anomaly_card.html"}}
-<div class="card anomaly-card" id="anomaly-{{.ID}}">
-  <div class="card-header">
-    <span class="card-name">{{.Name}}</span>
-    <span class="badge badge-{{.BadgeClass}}">{{.AnomalyKind}}</span>
-    <button class="btn-dismiss"
-            hx-delete="/anomalies/{{.ID}}/dismiss"
-            hx-target="#anomaly-{{.ID}}"
-            hx-swap="outerHTML swap:0.3s"
-            title="Dismiss">&times;</button>
-  </div>
-  {{if .Dimension}}
-  <div class="card-dimension">{{.Dimension}}</div>
-  {{end}}
-  <div class="card-metrics">
-    {{if eq .AnomalyKind "perf_drift"}}
-    <span class="card-count">p95 {{.CurrentP95}}ms</span>
-    <span class="card-baseline">baseline {{.BaselineMean}}ms</span>
-    {{else}}
-    <span class="card-count">{{.Current}} in 24h</span>
-    <span class="card-baseline">baseline {{.BaselineMean}}</span>
-    {{end}}
-    <span class="card-sigma">{{.Sigma}} deviation</span>
-  </div>
-  <div class="card-detail">{{.Summary}}</div>
-  {{if .Link}}
-  <a href="{{.Link}}" class="card-action">View detail →</a>
-  {{end}}
-</div>
+<li class="ala-row" data-sev="{{.SevTier}}" id="anomaly-{{.ID}}">
+  <a href="{{.Link}}" class="ala-row-link">
+    <span class="ala-sev ala-sev-{{.SevTier}}" aria-label="Severity: {{.SevTier}}"></span>
+
+    <div class="ala-row-body">
+      <div class="ala-row-titlerow">
+        <span class="ala-pillar ala-pillar-{{.Pillar}}">{{.Pillar}}</span>
+        <span class="ala-kind">{{.KindLabel}}</span>
+        <span class="ala-row-title mono">{{.Name}}</span>
+      </div>
+      <div class="ala-row-summary">{{.Summary}}</div>
+      {{if .Dimension}}<div class="ala-row-dim mono">{{.Dimension}}</div>{{end}}
+      <div class="ala-row-metarow">
+        <span class="ala-meta-pair">
+          <span class="ala-meta-k">24h</span>
+          {{if eq .AnomalyKind "perf_drift"}}<span class="ala-meta-v mono">p95 {{.CurrentP95}}ms</span>
+          {{else}}<span class="ala-meta-v mono">{{.CurrentFmt}}</span>{{end}}
+        </span>
+        <span class="ala-meta-pair">
+          <span class="ala-meta-k">baseline</span>
+          <span class="ala-meta-v mono">{{.BaselineMean}}</span>
+        </span>
+        <span class="ala-meta-pair">
+          <span class="ala-meta-k">σ</span>
+          <span class="ala-meta-v mono" data-tier="{{.SevTier}}">{{.Sigma}}</span>
+        </span>
+        <span class="ala-meta-pair">
+          <span class="ala-meta-k">×</span>
+          <span class="ala-meta-v mono">{{.Multiplier}}</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="ala-row-count mono">
+      {{if eq .AnomalyKind "perf_drift"}}<span class="ala-row-count-num">{{.CurrentP95}}</span><span class="ala-row-count-unit">ms p95</span>
+      {{else}}<span class="ala-row-count-num">{{.CurrentFmt}}</span><span class="ala-row-count-unit"> in 24h</span>{{end}}
+    </div>
+    <div class="ala-row-base mono">{{.BaselineMean}}</div>
+    <div class="ala-row-sigma mono" data-tier="{{.SevTier}}">
+      <span class="ala-row-sigma-num">{{.Sigma}}</span>
+      <span class="ala-row-sigma-mult">{{.Multiplier}} normal</span>
+    </div>
+  </a>
+</li>
 {{end}}

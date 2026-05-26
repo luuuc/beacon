@@ -1,11 +1,69 @@
-{{define "anomalies-cards"}}
-<div id="anomalies-cards" hx-get="/anomalies" hx-trigger="every 30s" hx-swap="innerHTML">
+{{define "anomalies-list"}}
+<div id="anomalies-list">
   {{if .Anomalies}}
-  <div class="card-grid">
+  <ul class="ala-feed" aria-label="Anomalies">
     {{range .Anomalies}}
     {{template "anomaly_card.html" .}}
     {{end}}
+  </ul>
+  {{else}}
+  <div class="empty-state">
+    <p>Nothing unusual. All signals are within normal range.</p>
   </div>
+  {{end}}
+</div>
+{{end}}
+{{define "anomalies-cards"}}
+<div id="anomalies-cards" hx-get="/anomalies" hx-trigger="every 30s" hx-swap="innerHTML">
+  {{if or .Anomalies (gt .Stats.Total 0)}}
+  {{/* Summary strip */}}
+  <div class="ala-summary">
+    <div class="ala-stat">
+      <span class="meta-label">Anomalies · 24h</span>
+      <div class="ala-stat-num mono">{{.Stats.Total}}</div>
+      <div class="ala-stat-sub mono">across all dimensions</div>
+    </div>
+    <div class="ala-stat">
+      <span class="meta-label">High deviation</span>
+      <div class="ala-stat-num mono{{if gt .Stats.High 0}} ala-num-high{{end}}">{{.Stats.High}}</div>
+      <div class="ala-stat-sub mono">≥ 10σ above baseline</div>
+    </div>
+    <div class="ala-stat">
+      <span class="meta-label">Worst σ</span>
+      <div class="ala-stat-num mono">{{.Stats.WorstSigma}}</div>
+      <div class="ala-stat-sub mono">{{.Stats.WorstName}}</div>
+    </div>
+    <div class="ala-stat">
+      <span class="meta-label">Top multiplier</span>
+      <div class="ala-stat-num mono">{{.Stats.TopMult}}×</div>
+      <div class="ala-stat-sub mono">vs daily baseline</div>
+    </div>
+  </div>
+
+  {{/* Filter chips */}}
+  <div class="ala-filters">
+    <div class="ala-chips" role="group" aria-label="Filter anomalies">
+      <button class="ala-chip{{if or (eq .Filter "") (eq .Filter "all")}} ala-chip-active{{end}}" hx-get="/anomalies?filter=all&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">All <span class="ala-chip-c mono">{{.Stats.Total}}</span></button>
+      <button class="ala-chip{{if eq .Filter "severe"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=severe&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Severe <span class="ala-chip-c mono">{{.Stats.High}}</span></button>
+      <button class="ala-chip{{if eq .Filter "strong"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=strong&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Strong <span class="ala-chip-c mono">{{.Stats.Medium}}</span></button>
+      <button class="ala-chip{{if eq .Filter "mild"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=mild&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Mild <span class="ala-chip-c mono">{{.Stats.Low}}</span></button>
+      <span class="ala-divider" aria-hidden="true"></span>
+      <button class="ala-chip{{if eq .Filter "outcomes"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=outcomes&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Outcomes <span class="ala-chip-c mono">{{.Stats.Outcomes}}</span></button>
+      <button class="ala-chip{{if eq .Filter "performance"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=performance&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Performance <span class="ala-chip-c mono">{{.Stats.Performance}}</span></button>
+      <button class="ala-chip{{if eq .Filter "errors"}} ala-chip-active{{end}}" hx-get="/anomalies?filter=errors&list=1" hx-target="#anomalies-list" hx-swap="outerHTML">Errors <span class="ala-chip-c mono">{{.Stats.Errors}}</span></button>
+    </div>
+  </div>
+
+  {{/* Column header — desktop only */}}
+  <div class="ala-list-head" role="presentation">
+    <span>Anomaly</span>
+    <span>24h</span>
+    <span>Baseline</span>
+    <span>σ deviation</span>
+  </div>
+
+  {{/* Feed */}}
+  {{template "anomalies-list" .}}
   {{else}}
   <div class="empty-state">
     <p>Nothing unusual. All signals are within normal range.</p>
@@ -14,8 +72,18 @@
 </div>
 {{end}}
 {{define "content"}}
-<h1>Anomalies</h1>
-<p class="subtitle">Anything unusual?</p>
-{{template "anomalies-cards" .}}
+<div class="ala-page">
+  <div class="ala-header">
+    <div>
+      <h1 class="ala-title">Anomalies</h1>
+      <div class="ala-subtitle">What's unusual right now?</div>
+    </div>
+    <div class="ala-header-meta">
+      <span class="ala-pulse" aria-hidden="true"></span>
+      <span class="mono">live · auto-refresh 30s</span>
+    </div>
+  </div>
+  {{template "anomalies-cards" .}}
+</div>
 {{end}}
 {{define "anomalies.html"}}{{template "layout.html" .}}{{end}}
